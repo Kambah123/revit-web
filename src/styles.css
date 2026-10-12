@@ -101,3 +101,8 @@ fieldset .field { margin-bottom: 0; }
 .stats { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 8px 0 0; }
 .stats dt { color: var(--muted); }
 .stats dd { margin: 0; text-align: right; }
+.materials { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.materials .swatch {
+  display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px;
+  border: 1px solid var(--border); vertical-align: -1px;
+}

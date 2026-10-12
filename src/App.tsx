@@ -1,20 +1,29 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
 import {
+  addColumn,
+  addFloor,
   addLevel,
   addOpening,
+  addRoom,
   addWall,
+  deleteColumn,
+  deleteFloor,
   deleteLevel,
   deleteOpening,
+  deleteRoom,
   deleteWall,
   renameLevel,
   setLevelElevation,
+  updateColumn,
+  updateFloor,
   updateOpening,
+  updateRoom,
   updateWall,
   updateWallType,
 } from "./model/commands";
 import { nearestWallEndpoint, nearestWallOnLevel } from "./model/queries";
-import { snapValue } from "./model/geometry";
+import { pointsEqual, snapValue } from "./model/geometry";
 import { createProject, levelById, openingById, wallById } from "./model/project";
 import { parseProject, serializeProject } from "./model/schema";
 import type { Point, Project } from "./model/types";
@@ -71,6 +80,7 @@ export function App() {
   const [activeLevelId, setActiveLevelId] = useState<string>(project.levels[0].id);
   const [selectionState, setSelection] = useState<Selection>(null);
   const [pendingStart, setPendingStart] = useState<Point | null>(null);
+  const [pendingPoints, setPendingPoints] = useState<Point[]>([]);
   const [cursor, setCursor] = useState<Point | null>(null);
   const [snapStep, setSnapStep] = useState(100);
   const [message, setMessage] = useState<Message | null>(initial.message);
@@ -99,15 +109,16 @@ export function App() {
   }
 
   // Handlers for the scene read the latest state through this ref, because the scene is created once.
-  const ctx = useRef({ project, tool, activeId, pendingStart, snapStep, run });
-  ctx.current = { project, tool, activeId, pendingStart, snapStep, run };
+  const ctx = useRef({ project, tool, activeId, pendingStart, pendingPoints, snapStep, run });
+  ctx.current = { project, tool, activeId, pendingStart, pendingPoints, snapStep, run };
 
   useEffect(() => {
     if (!containerRef.current) return;
     const scene = new BimScene(containerRef.current, {
       onPlanClick: (point) => handlePlanClick(point),
       onPlanMove: (point) => {
-        if (ctx.current.tool === "wall") {
+        const t = ctx.current.tool;
+        if (t === "wall" || t === "floor" || t === "room") {
           setCursor(snapToEndpoint(point));
         }
       },
@@ -142,8 +153,17 @@ export function App() {
   useEffect(() => sceneRef.current?.setView(view), [view]);
   useEffect(() => sceneRef.current?.setSnapStep(snapStep), [snapStep]);
   useEffect(() => {
-    sceneRef.current?.setPreview(tool === "wall" ? pendingStart : null, tool === "wall" ? cursor : null);
-  }, [pendingStart, cursor, tool]);
+    if (tool === "wall") {
+      sceneRef.current?.setPreview(pendingStart, cursor);
+      sceneRef.current?.setPolygonPreview(null, null);
+    } else if (tool === "floor" || tool === "room") {
+      sceneRef.current?.setPreview(null, null);
+      sceneRef.current?.setPolygonPreview(pendingPoints, cursor);
+    } else {
+      sceneRef.current?.setPreview(null, null);
+      sceneRef.current?.setPolygonPreview(null, null);
+    }
+  }, [pendingStart, pendingPoints, cursor, tool]);
 
   // Autosave after edits settle, so that a reload recovers the latest model.
   useEffect(() => {
@@ -174,16 +194,23 @@ export function App() {
       } else if (mod) {
         return;
       } else if (event.key === "Escape") {
-        if (ctx.current.pendingStart) {
+        if (ctx.current.pendingStart || ctx.current.pendingPoints.length > 0) {
           setPendingStart(null);
-          say("Wall chain finished.");
+          setPendingPoints([]);
+          say("Drawing cancelled.");
         } else {
           changeTool("select");
           setSelection(null);
         }
+      } else if (event.key === "Enter" && (ctx.current.tool === "floor" || ctx.current.tool === "room")) {
+        event.preventDefault();
+        closePolygon();
       } else if (event.key === "w" || event.key === "W") changeTool("wall");
       else if (event.key === "d" || event.key === "D") changeTool("door");
       else if (event.key === "n" || event.key === "N") changeTool("window");
+      else if (event.key === "f" || event.key === "F") changeTool("floor");
+      else if (event.key === "r" || event.key === "R") changeTool("room");
+      else if (event.key === "c" || event.key === "C") changeTool("column");
       else if (event.key === "s" || event.key === "S") changeTool("select");
       else if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
     };
@@ -194,6 +221,7 @@ export function App() {
   function changeTool(next: Tool) {
     setTool(next);
     setPendingStart(null);
+    setPendingPoints([]);
     setCursor(null);
   }
 
@@ -235,6 +263,36 @@ export function App() {
       }
       return;
     }
+    if (c.tool === "floor" || c.tool === "room") {
+      const at = snapToEndpoint(point);
+      const pts = c.pendingPoints;
+      // Clicking the first point closes the boundary.
+      if (pts.length >= 3 && pointsEqual(at, pts[0])) {
+        closePolygon(pts);
+        return;
+      }
+      if (pts.length >= 1 && pointsEqual(at, pts[pts.length - 1])) return;
+      setPendingPoints([...pts, at]);
+      if (pts.length === 0) say("Click the boundary points. Click the first point or press Enter to close; Esc cancels.");
+      return;
+    }
+    if (c.tool === "column") {
+      const at = snapToEndpoint(point);
+      let created: string | null = null;
+      const ok = c.run(
+        "Add column",
+        (p) => {
+          const typeId = p.columnTypes[0]?.id;
+          if (!typeId) throw new Error("Create a column type before adding columns.");
+          const result = addColumn(p, c.activeId, typeId, at);
+          created = result.column.id;
+          return result.project;
+        },
+        "Column placed. Select it to edit its height and type.",
+      );
+      if (ok && created) setSelection({ kind: "column", id: created });
+      return;
+    }
     if (c.tool === "door" || c.tool === "window") {
       const kind = c.tool;
       const nearest = nearestWallOnLevel(c.project, c.activeId, point, HOST_PICK_DISTANCE_MM);
@@ -259,12 +317,63 @@ export function App() {
     }
   }
 
+  /** Closes the pending boundary polygon into a floor or room. */
+  function closePolygon(explicit?: Point[]) {
+    const c = ctx.current;
+    const pts = explicit ?? c.pendingPoints;
+    if (pts.length < 3) {
+      say("A boundary needs at least three points.", "error");
+      return;
+    }
+    if (c.tool === "floor") {
+      let created: string | null = null;
+      const ok = c.run(
+        "Add floor",
+        (p) => {
+          const typeId = p.floorTypes[0]?.id;
+          if (!typeId) throw new Error("Create a floor type before adding floors.");
+          const result = addFloor(p, c.activeId, typeId, pts);
+          created = result.floor.id;
+          return result.project;
+        },
+        "Floor added. Select it to change its type or level.",
+      );
+      if (ok && created) {
+        setPendingPoints([]);
+        setSelection({ kind: "floor", id: created });
+      }
+      return;
+    }
+    if (c.tool === "room") {
+      let created: string | null = null;
+      const ok = c.run(
+        "Add room",
+        (p) => {
+          const result = addRoom(p, c.activeId, `Room ${p.rooms.length + 1}`, String(p.rooms.length + 1), pts);
+          created = result.room.id;
+          return result.project;
+        },
+        "Room added. Select it to rename it and edit its number.",
+      );
+      if (ok && created) {
+        setPendingPoints([]);
+        setSelection({ kind: "room", id: created });
+      }
+    }
+  }
+
   function deleteSelection() {
     if (!selection) return;
     if (selection.kind === "wall") {
       if (run("Delete wall", (p) => deleteWall(p, selection.id), "Wall deleted (its doors and windows too).")) setSelection(null);
-    } else {
+    } else if (selection.kind === "opening") {
       if (run("Delete opening", (p) => deleteOpening(p, selection.id), "Door or window deleted.")) setSelection(null);
+    } else if (selection.kind === "floor") {
+      if (run("Delete floor", (p) => deleteFloor(p, selection.id), "Floor deleted.")) setSelection(null);
+    } else if (selection.kind === "room") {
+      if (run("Delete room", (p) => deleteRoom(p, selection.id), "Room deleted.")) setSelection(null);
+    } else if (selection.kind === "column") {
+      if (run("Delete column", (p) => deleteColumn(p, selection.id), "Column deleted.")) setSelection(null);
     }
   }
 
@@ -332,9 +441,15 @@ export function App() {
       ? pendingStart
         ? "Click the next point to continue the wall. Esc finishes."
         : `Click a start point on ${activeLevel?.name ?? "the active level"}. Ends snap to existing walls.`
-      : tool === "door" || tool === "window"
-        ? `Click near a wall on ${activeLevel?.name ?? "the active level"} to host a ${tool}.`
-        : "Click a wall, door or window to select it. Drag to pan (plan) or orbit (3D).";
+      : tool === "floor" || tool === "room"
+        ? pendingPoints.length > 0
+          ? `Boundary: ${pendingPoints.length} point(s). Click the first point or press Enter to close; Esc cancels.`
+          : `Click to draw the ${tool} boundary on ${activeLevel?.name ?? "the active level"}.`
+        : tool === "column"
+          ? `Click to place a column on ${activeLevel?.name ?? "the active level"}.`
+          : tool === "door" || tool === "window"
+            ? `Click near a wall on ${activeLevel?.name ?? "the active level"} to host a ${tool}.`
+            : "Click a wall, door, window, floor, room or column to select it. Drag to pan (plan) or orbit (3D).";
 
   return (
     <div className="app">
@@ -348,7 +463,7 @@ export function App() {
           />
         </div>
         <div className="group" role="group" aria-label="Tools">
-          {(["select", "wall", "door", "window"] as Tool[]).map((t) => (
+          {(["select", "wall", "door", "window", "floor", "room", "column"] as Tool[]).map((t) => (
             <button key={t} className={tool === t ? "active" : ""} onClick={() => changeTool(t)} title={shortcutFor(t)}>
               {labelFor(t)}
             </button>
@@ -429,6 +544,9 @@ export function App() {
             onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
             onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
             onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
+            onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
+            onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}
+            onColumnPatch={(columnId, patch) => run("Edit column", (p) => updateColumn(p, columnId, patch))}
             onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
             onDeleteSelection={deleteSelection}
           />
@@ -440,14 +558,27 @@ export function App() {
 
 function validSelection(p: Project, selection: Selection): Selection {
   if (!selection) return null;
-  if (selection.kind === "wall") return wallById(p, selection.id) ? selection : null;
-  return openingById(p, selection.id) ? selection : null;
+  const found =
+    (selection.kind === "wall" && wallById(p, selection.id)) ||
+    (selection.kind === "opening" && openingById(p, selection.id)) ||
+    (selection.kind === "floor" && p.floors.some((f) => f.id === selection.id)) ||
+    (selection.kind === "room" && p.rooms.some((r) => r.id === selection.id)) ||
+    (selection.kind === "column" && p.columns.some((c) => c.id === selection.id));
+  return found ? selection : null;
 }
 
 function labelFor(tool: Tool): string {
-  return { select: "Select", wall: "Wall", door: "Door", window: "Window" }[tool];
+  return { select: "Select", wall: "Wall", door: "Door", window: "Window", floor: "Floor", room: "Room", column: "Column" }[tool];
 }
 
 function shortcutFor(tool: Tool): string {
-  return { select: "Select (S)", wall: "Wall (W)", door: "Door (D)", window: "Window (N)" }[tool];
+  return {
+    select: "Select (S)",
+    wall: "Wall (W)",
+    door: "Door (D)",
+    window: "Window (N)",
+    floor: "Floor (F)",
+    room: "Room (R)",
+    column: "Column (C)",
+  }[tool];
 }

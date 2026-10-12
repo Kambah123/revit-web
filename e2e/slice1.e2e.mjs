@@ -236,7 +236,7 @@ try {
   const savedText = readFileSync(join(DOWNLOADS, saved[0]), "utf8");
   const savedObj = JSON.parse(savedText);
   assert.equal(savedObj.format, "revit-web/project");
-  assert.equal(savedObj.schemaVersion, 2);
+  assert.equal(savedObj.schemaVersion, 3);
   assert.equal(savedObj.walls.length, 3);
   assert.equal(savedObj.openings.length, 2);
   step("saves a project file in the versioned format");

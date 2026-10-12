@@ -2,13 +2,14 @@ import * as THREE from "three";
 import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { clipSolid, PLAN_CUT_HEIGHT_MM, projectGeometry, type OpeningVoid, type Solid } from "../geometry/wallSolids";
+import { columnSolids, floorSlabs, roomFaces, type FloorSlab, type RoomFace } from "../geometry/elementGeometry";
 import { snapPoint } from "../model/geometry";
-import { levelById } from "../model/project";
+import { levelById, materialById } from "../model/project";
 import type { Point, Project } from "../model/types";
 
 export type ViewMode = "plan" | "3d";
-export type Tool = "select" | "wall" | "door" | "window";
-export type Selection = { kind: "wall" | "opening"; id: string } | null;
+export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column";
+export type Selection = { kind: "wall" | "opening" | "floor" | "room" | "column"; id: string } | null;
 
 export interface SceneHandlers {
   /** A click on the active level's plane, snapped to the snap step (integer mm). */
@@ -39,12 +40,26 @@ const COLOR = {
   doorLeaf: 0x9b6b3c,
   glass: 0x7fd4ff,
   preview: 0x34c3ff,
+  roomFill: 0x34c3ff,
+  roomSelected: 0xffb020,
 };
 
 interface PickUserData {
   wallId?: string;
   openingId?: string;
+  floorId?: string;
+  roomId?: string;
+  columnId?: string;
 }
+
+/** Pick priority when several meshes overlap under the pointer: lower wins. */
+const PICK_PRIORITY: Record<string, number> = {
+  openingId: 0,
+  columnId: 1,
+  wallId: 2,
+  floorId: 3,
+  roomId: 4,
+};
 
 /**
  * Owns the Three.js scene. It renders derived geometry (see src/geometry) in two views of the same
@@ -62,8 +77,11 @@ export class BimScene {
   private readonly modelGroup = new THREE.Group();
   private readonly pickGroup = new THREE.Group();
   private readonly previewGroup = new THREE.Group();
+  private readonly labelGroup = new THREE.Group();
   private readonly resizeObserver: ResizeObserver;
   private readonly materials: Record<string, THREE.Material>;
+  /** Cache of colour materials keyed by "#rrggbb", rebuilt never; disposed with the scene. */
+  private readonly colorMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
   private project: Project | null = null;
   private activeLevelId: string | null = null;
@@ -120,6 +138,20 @@ export class BimScene {
       }),
       pick: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       preview: new THREE.LineBasicMaterial({ color: COLOR.preview }),
+      roomFill: new THREE.MeshBasicMaterial({
+        color: COLOR.roomFill,
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      roomSelected: new THREE.MeshBasicMaterial({
+        color: COLOR.roomSelected,
+        transparent: true,
+        opacity: 0.25,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
     };
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -127,7 +159,7 @@ export class BimScene {
     sun.position.set(12, 25, 8);
     this.scene.add(sun);
     this.scene.add(new THREE.GridHelper(200, 200, 0x3a4150, 0x2a2f3a));
-    this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup);
+    this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup, this.labelGroup);
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -190,6 +222,26 @@ export class BimScene {
     this.previewGroup.add(new THREE.Line(geometry, this.materials.preview));
   }
 
+  /** Draws a polygon-chain preview: the fixed vertices, a rubber band to `cursor`, and a closing band to the start. */
+  setPolygonPreview(points: Point[] | null, cursor: Point | null): void {
+    this.clearPreview();
+    if (!points || points.length === 0) return;
+    const y = this.activeElevationM() + 0.02;
+    const at = (p: Point) => planToWorld(p, y);
+    const vertices = points.map(at);
+    if (cursor) vertices.push(at(cursor));
+    if (vertices.length >= 2) {
+      this.previewGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(vertices), this.materials.preview));
+    }
+    // Ghost of the closing edge back to the first point.
+    if (cursor && points.length >= 2) {
+      const closing = new THREE.BufferGeometry().setFromPoints([at(cursor), at(points[0])]);
+      const dashed = new THREE.Line(closing, this.materials.preview);
+      dashed.computeLineDistances();
+      this.previewGroup.add(dashed);
+    }
+  }
+
   /** Screen position (CSS pixels within the canvas) of a plan point on the active level. */
   planToScreen(point: Point): { x: number; y: number } {
     const v = planToWorld(point, this.activeElevationM());
@@ -223,8 +275,11 @@ export class BimScene {
     this.orbitControls.dispose();
     this.clearGroup(this.modelGroup);
     this.clearGroup(this.pickGroup);
+    this.clearGroup(this.labelGroup);
     this.clearPreview();
     Object.values(this.materials).forEach((m) => m.dispose());
+    this.colorMaterials.forEach((m) => m.dispose());
+    this.colorMaterials.clear();
     this.renderer.dispose();
     canvas.remove();
   }
@@ -274,6 +329,7 @@ export class BimScene {
   private rebuild(): void {
     this.clearGroup(this.modelGroup);
     this.clearGroup(this.pickGroup);
+    this.clearGroup(this.labelGroup);
     if (!this.project || !this.activeLevelId) return;
     const project = this.project;
     const active = levelById(project, this.activeLevelId);
@@ -287,6 +343,9 @@ export class BimScene {
 
     const selectedWallId = this.selection?.kind === "wall" ? this.selection.id : null;
     const selectedOpeningId = this.selection?.kind === "opening" ? this.selection.id : null;
+    const selectedFloorId = this.selection?.kind === "floor" ? this.selection.id : null;
+    const selectedRoomId = this.selection?.kind === "room" ? this.selection.id : null;
+    const selectedColumnId = this.selection?.kind === "column" ? this.selection.id : null;
     const levelOfWall = new Map(project.walls.map((w) => [w.id, w.levelId]));
 
     for (const solid of clippedSolids) {
@@ -295,6 +354,51 @@ export class BimScene {
       this.addSolid(this.modelGroup, solid, material, { wallId: solid.wallId, openingId: solid.openingId });
     }
     for (const v of clippedVoids) this.addVoid(v);
+    for (const slab of floorSlabs(project, visible)) {
+      this.addFloorSlab(slab, slab.floorId === selectedFloorId);
+    }
+    for (const c of columnSolids(project, visible)) {
+      const material =
+        c.columnId === selectedColumnId
+          ? this.materials.selected
+          : this.materialForColor(this.typeMaterialColor(c.materialId), COLOR.wall);
+      this.addSolid(
+        this.modelGroup,
+        {
+          role: "wall",
+          wallId: "",
+          centre: c.centre,
+          axis: { x: 1, y: 0 },
+          length: c.width,
+          thickness: c.depth,
+          z0: c.z0,
+          z1: c.z1,
+        },
+        material,
+        { columnId: c.columnId },
+      );
+    }
+    // Rooms are plan annotations: a translucent fill and a label, never 3D geometry.
+    if (this.view === "plan") {
+      for (const face of roomFaces(project, visible)) {
+        this.addRoomFace(face, face.roomId === selectedRoomId);
+      }
+    }
+  }
+
+  /** Material for a stored colour string, created once and shared. */
+  private materialForColor(color: string | undefined, fallback: number): THREE.Material {
+    const hex = color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : `#${fallback.toString(16).padStart(6, "0")}`;
+    let material = this.colorMaterials.get(hex);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.85 });
+      this.colorMaterials.set(hex, material);
+    }
+    return material;
+  }
+
+  private typeMaterialColor(materialId: string | undefined): string | undefined {
+    return materialId && this.project ? materialById(this.project, materialId)?.color : undefined;
   }
 
   private materialFor(
@@ -339,11 +443,72 @@ export class BimScene {
     this.addSolid(this.pickGroup, s, this.materials.pick, { wallId: v.wallId, openingId: v.openingId });
   }
 
+  /** Extrudes a floor slab from its boundary polygon. The top face is at the level elevation. */
+  private addFloorSlab(slab: FloorSlab, selected: boolean): void {
+    const shape = new THREE.Shape(slab.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const depth = (slab.z1 - slab.z0) * MM_TO_SCENE;
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+    // Shape (x, -y) is rotated so the extrusion runs along world +Y and plan y maps to -z.
+    const material = selected ? this.materials.selected : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = slab.z0 * MM_TO_SCENE;
+    mesh.userData = { floorId: slab.floorId };
+    this.modelGroup.add(mesh);
+  }
+
+  /** Plan-only room fill and a canvas-texture label showing name and derived area. */
+  private addRoomFace(face: RoomFace, selected: boolean): void {
+    const shape = new THREE.Shape(face.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const geometry = new THREE.ShapeGeometry(shape);
+    const mesh = new THREE.Mesh(geometry, selected ? this.materials.roomSelected : this.materials.roomFill);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = face.z * MM_TO_SCENE + 0.01;
+    mesh.userData = { roomId: face.roomId };
+    this.modelGroup.add(mesh);
+
+    const room = this.project?.rooms.find((r) => r.id === face.roomId);
+    if (room) {
+      const areaM2 = (face.areaMm2 / 1e6).toFixed(2);
+      const sprite = this.labelSprite(`${room.name}\n${areaM2} m²`);
+      sprite.position.copy(planToWorld(face.labelPoint, face.z * MM_TO_SCENE + 0.05));
+      sprite.userData = { roomId: face.roomId };
+      this.labelGroup.add(sprite);
+    }
+  }
+
+  /** A text sprite drawn on a canvas texture; shared style, disposed with the scene. */
+  private labelSprite(text: string): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "rgba(20, 24, 32, 0.75)";
+    ctx.beginPath();
+    ctx.roundRect(8, 24, 240, 80, 12);
+    ctx.fill();
+    ctx.fillStyle = "#e6e9ef";
+    ctx.font = "600 28px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    const lines = text.split("\n");
+    lines.forEach((line, i) => ctx.fillText(line, 128, 56 + i * 34, 224));
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(2.4, 1.2, 1);
+    return sprite;
+  }
+
   /** Removes meshes from a group and frees their geometry. Materials are shared and kept. */
   private clearGroup(group: THREE.Group): void {
     for (const child of [...group.children]) {
       group.remove(child);
       if (child instanceof THREE.Mesh) child.geometry.dispose();
+      if (child instanceof THREE.Sprite) {
+        child.material.map?.dispose();
+        child.material.dispose();
+      }
     }
   }
 
@@ -395,16 +560,35 @@ export class BimScene {
     if (point) this.handlers.onPlanMove(point);
   };
 
-  /** Openings first (they sit inside walls), then walls. */
+  /**
+   * Picks under the pointer. Openings win over walls; among overlapping elements the pick priority
+   * list decides (openings, columns, walls, floors, rooms), so flat plan fills do not steal clicks.
+   */
   private pickAt(event: PointerEvent): Selection {
     this.setPointerFromEvent(event);
-    const openingHit = this.raycaster.intersectObjects(this.pickGroup.children, false)[0];
-    const openingId = openingHit?.object.userData.openingId as string | undefined;
-    if (openingId) return { kind: "opening", id: openingId };
-    const wallHit = this.raycaster.intersectObjects(this.modelGroup.children, false)[0];
-    const data = wallHit?.object.userData as PickUserData | undefined;
-    if (data?.openingId) return { kind: "opening", id: data.openingId };
-    if (data?.wallId) return { kind: "wall", id: data.wallId };
-    return null;
+    const objects = [...this.pickGroup.children, ...this.modelGroup.children, ...this.labelGroup.children];
+    const hits = this.raycaster.intersectObjects(objects, false);
+    let best: Selection = null;
+    let bestPriority = Infinity;
+    for (const hit of hits) {
+      const data = hit.object.userData as PickUserData;
+      const choice = selectionFromUserData(data);
+      if (!choice) continue;
+      const priority = PICK_PRIORITY[choice.kind === "wall" ? "wallId" : choice.kind === "opening" ? "openingId" : choice.kind === "floor" ? "floorId" : choice.kind === "column" ? "columnId" : "roomId"] ?? 99;
+      if (priority < bestPriority) {
+        best = choice;
+        bestPriority = priority;
+      }
+    }
+    return best;
   }
+}
+
+function selectionFromUserData(data: PickUserData): Selection {
+  if (data.openingId) return { kind: "opening", id: data.openingId };
+  if (data.columnId) return { kind: "column", id: data.columnId };
+  if (data.wallId) return { kind: "wall", id: data.wallId };
+  if (data.floorId) return { kind: "floor", id: data.floorId };
+  if (data.roomId) return { kind: "room", id: data.roomId };
+  return null;
 }
