@@ -6,10 +6,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
+    "server": "node server/index.mjs",
+    "start": "node server/index.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test": "vitest run",
+    "test:ai-manual": "node server/manualTest.mjs",
     "e2e": "node e2e/slice1.e2e.mjs",
+    "e2e:ai": "node e2e/slice6-ai.e2e.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
