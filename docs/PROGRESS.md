@@ -2,6 +2,60 @@
 
 Latest state first. Every slice: intent, work, verification (real results only), commit, next task.
 
+## Session 2026-10-12 (second) — DeepSeek AI Architect (slices A–G)
+
+**Branch/commit at start:** `arena/673afcb7-revit-web` @ `9a28692` (clean; slices 1–5 already merged).
+
+**Baseline measured:** `tsc` clean, 94 unit tests pass, `npm run build` passes (three.js chunk warning, known).
+
+**Audit:** schema v4 model + command layer + whole-project validation + derived geometry (incl. hip
+roofs) + generated elevations + undo/redo history + autosave. No backend existed. Sections and
+dimensions/annotations are honest stubs (roadmap M4). Design and API research (official DeepSeek
+docs: `deepseek-flash`/`deepseek-v4-pro`, `response_format: json_object`, concurrency-based rate
+limits, current pricing) recorded in `docs/AI_ARCHITECT.md`.
+
+**Slice A (`b26b29f`):** `docs/AI_ARCHITECT.md` — audit, DeepSeek research, typed DesignPlan IR design, flow, security, env vars, limits.
+
+**Slice B (`030f08d`):** dependency-free Node server (`server/`): `POST /api/ai/plan` (request
+validation, per-IP rate limit, upstream timeout, safe typed errors, one empty-content retry for
+JSON mode), `GET /api/ai/health`, static SPA hosting with traversal/sensitive-path protection.
+`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`/`DEEPSEEK_BASE_URL` from server env only; Vite proxies `/api`.
+Verified: 14 server tests with a mocked DeepSeek (key never in responses, 400/405/415/429/502/503/504 mapping).
+
+**Slice C (`79737de`):** `src/ai/` DesignPlan IR (27 ops mapping 1:1 to real commands), explicit
+unit conversion (mm/cm/m/ft/in → integer mm), strict validator with readable errors, op preview
+labels, quick-apply heuristics; prompt/validator sync test. Verified: 21 new checks.
+
+**Slices D/E engine (`8fcadd9`):** `applyPlan.ts` transactional executor through
+`src/model/commands.ts` (refs id/opId/name, stable identities, atomic, per-op outcomes, view
+requests); `context.ts` compact project context (never the whole file); `apiClient.ts`; additive
+`addOpeningType`/`updateOpeningType`/`deleteOpeningType` commands (mirror `addWallType`). Verified:
+12 integration tests — new-building generation (walls+rooms+slab+door+2 windows+hip roof all real
+entities), hip roof on existing building, room resize keeping identity, wall edit with stable id
+and intact host links, door/window fit refusals, atomic recovery (mid-plan failure leaves the model
+untouched), cascades, undo/redo as one history step.
+
+**Slices D/E/F UI (`6dba1e5`):** `AiArchitectPanel` (status, preview cards with
+summary/assumptions/clarifications/unsupported+alternatives, validated op list, Apply/Quick
+apply/Cancel/Retry, suggestions, disclaimer) wired into the workspace (ribbon + launcher command,
+one history commit, requested views opened, first created element selected). e2e `slice6-ai.e2e.mjs`
+8 checks with DeepSeek mocked at the network layer; caught and fixed a real bug (model edits must
+not run inside a React state updater under StrictMode) and a static-server fallback leak
+(`/.git/config` now 404s). Screenshots inspected (`slice6-ai-preview/applied/elevation/unsupported`
+— genuine punched walls, hip roof, Properties editing a real wall, two-digit op numbering fixed,
+header/scroll clipping fixed).
+
+**Slice G (this commit):** `server/manualTest.mjs` (manual live-API test), README/TESTING/
+KNOWN_LIMITATIONS/AI_ARCHITECT updates.
+
+**Verified end-to-end:** `tsc` clean; 141 unit/integration tests pass; `npm run build` passes;
+e2e slice1 17/17, slice2 11/11, slice3 14/14, slice4 9/9, slice5 11/11, slice6 8/8 (70 checks).
+
+**Next task:** sections and dimensions when M4 lands (then the AI can offer them); streaming
+progress for long plans; shared rate limiter for multi-instance deployments.
+
+---
+
 ## Session 2026-10-12 — Phases 0–2 done; M3 modelling expanded (slices 2–4)
 
 **Branch/commit at start:** `arena/63a6b55e-revit-web` @ `bd42fa0` (squash-merge of the previous session's slice 1; historical `4035013`/`ddec16a` absent from this clone — see DECISIONS D4).

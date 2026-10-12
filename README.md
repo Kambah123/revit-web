@@ -9,6 +9,10 @@ Current features (v0.1):
 - Wall tool: click to place walls, chain them, and snap to 0.1 m, 0.5 m, or 1 m (or off)
 - Select walls to edit level, height, thickness, start/end points, and length; delete walls
 - Save and open projects as JSON (`*.revit-web.json`), with validation on load
+- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres
+  or feet); the model proposes a validated, previewed design plan that is applied through the real
+  command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus
+  generated elevations. See `docs/AI_ARCHITECT.md` for setup, security and limits.
 
 ## Getting started
 
@@ -17,10 +21,28 @@ Requires Node.js 22 or newer.
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-npm test           # unit tests for the model, geometry, history and persistence
+npm test           # unit tests for the model, geometry, history, persistence and AI pipeline
 npm run build      # type-check and production build
 CHROME_PATH=/path/to/chrome npm run e2e   # end-to-end test in a real browser (dev server must be running)
 ```
+
+### AI Architect (DeepSeek)
+
+The AI Architect needs a small server that keeps the DeepSeek API key out of the browser:
+
+```bash
+# development: run the AI server next to the Vite dev server (Vite proxies /api to it)
+export DEEPSEEK_API_KEY=sk-...       # server-side only; never a VITE_ variable
+npm run server                       # http://127.0.0.1:8787 (also AI_DEMO_PLANNER=1 for a keyless demo)
+
+# production: one process serves the built SPA and the API
+npm run build
+npm start                            # serves dist/ + /api/ai/plan on PORT (default 8787)
+```
+
+Configuration: `DEEPSEEK_API_KEY` (required), `DEEPSEEK_MODEL` (default `deepseek-flash`),
+`AI_TIMEOUT_MS`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
+`docs/AI_ARCHITECT.md`. Manual live-API test (spends tokens): `DEEPSEEK_API_KEY=sk-... npm run test:ai-manual`.
 
 ## What works (slice 1)
 

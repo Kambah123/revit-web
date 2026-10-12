@@ -29,6 +29,16 @@ Kept current every slice. Newest items last within each section. (Session 2026-1
 - No dimensions, text, tags, symbols, callouts, view templates or visibility filters yet.
 - Undo history is in memory and is not saved with the project.
 
+## AI Architect
+
+- DeepSeek proposes conceptual designs only; outputs are not building-code compliant and are not professional engineering. The UI states this on every panel.
+- Roof generation is hip-only (the engine's only roof type). Gable/shed/mansard and free-form footprints are returned as `unsupported` with the hip alternative, never faked.
+- Section views and dimension/annotation tools do not exist in the engine yet, so the AI reports them as unsupported and offers elevations or 3D instead.
+- Room boundaries are explicit polygons (no wall-derived room bounding yet). The AI can resize a room boundary via `room.update` even though the properties palette does not expose boundary editing yet; walls are separate elements and must be moved explicitly.
+- The model can propose ill-fitting geometry; the executor refuses it atomically with per-operation errors. A refused plan never leaves a partially applied model.
+- The per-IP rate limit and request caps are per-process (in-memory); multi-instance deployments need a shared limiter.
+- `AI_DEMO_PLANNER=1` serves deterministic local plans for keyless previews and is clearly labelled in the UI; it is not the language model.
+
 ## Persistence
 
 - Autosave holds one slot in local storage; no recovery versions.
