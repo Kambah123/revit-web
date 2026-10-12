@@ -33,6 +33,16 @@ Reverified 2026-10-12 (UTC). Current feature boundaries are in [`PRODUCT_SCOPE.m
 - Ribbon/workspace exists with 11 tabs, but most commands in Structure/Steel/Insert/Annotate/Analyze/Massing/Collaborate/Manage/Add-Ins remain disabled with explanatory “Not implemented yet” tooltips.
 - Some unselected objects can be hard to distinguish when their assigned display material matches their surroundings; selection highlighting remains available.
 
+## AI Architect
+
+- DeepSeek proposes conceptual designs only; outputs are not building-code compliant and are not professional engineering. The UI states this on every panel.
+- Roof generation is hip-only (the engine's only roof type). Gable/shed/mansard and free-form footprints are returned as `unsupported` with the hip alternative, never faked.
+- Section views and dimension/annotation tools do not exist in the engine yet, so the AI reports them as unsupported and offers elevations or 3D instead.
+- Room boundaries are explicit polygons (no wall-derived room bounding yet). The AI can resize a room boundary via `room.update` even though the properties palette does not expose boundary editing yet; walls are separate elements and must be moved explicitly.
+- The model can propose ill-fitting geometry; the executor refuses it atomically with per-operation errors. A refused plan never leaves a partially applied model.
+- The per-IP rate limit and request caps are per-process (in-memory); multi-instance deployments need a shared limiter.
+- `AI_DEMO_PLANNER=1` serves deterministic local plans for keyless previews and is clearly labelled in the UI; it is not the language model.
+
 ## Persistence and interoperability
 
 - Undo history is in memory and is not saved in the project file. Autosave has one browser-local storage slot; there is no recovery history, backend or cloud sync.

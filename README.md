@@ -9,6 +9,7 @@ A browser-based BIM editor with an application-native semantic model and a Three
 - Use per-project element types and built-in display materials; choose a wall type's material and see its colour in the native 3D view.
 - Edit supported element properties, view derived areas/volumes, undo/redo, autosave/recover, and save/open versioned `*.revit-web.json` projects.
 - Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
+- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres or feet); the model proposes a validated, previewed design plan that is applied through the real command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus generated elevations. See [`docs/AI_ARCHITECT.md`](docs/AI_ARCHITECT.md) for setup, security and limits.
 
 The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v4; v1/v2/v3 files migrate to v4). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
 
@@ -19,7 +20,7 @@ Requires Node.js 22 or newer.
 ```bash
 npm ci
 npm run dev          # Vite dev server (default http://localhost:5173)
-npm test             # Unit and integration tests
+npm test             # Unit and integration tests (model, geometry, AI pipeline, server)
 npm run typecheck    # TypeScript checks
 npm run build        # TypeScript checks and production build
 ```
@@ -28,8 +29,37 @@ For browser tests, start the dev server in one terminal, install/provide Chrome 
 
 ```bash
 CHROME_PATH=/path/to/chrome npm run e2e       # core workflow (slice 1)
-CHROME_PATH=/path/to/chrome npm run e2e:all   # all four browser suites
+CHROME_PATH=/path/to/chrome npm run e2e:ai    # AI Architect workflow (DeepSeek mocked)
+CHROME_PATH=/path/to/chrome npm run e2e:all   # all browser suites
 ```
+
+### AI Architect (DeepSeek)
+
+The AI Architect needs a small server that keeps the DeepSeek API key out of the browser:
+
+```bash
+# development: run the AI server next to the Vite dev server (Vite proxies /api to it)
+export DEEPSEEK_API_KEY=sk-...       # server-side only; never a VITE_ variable
+npm run server                       # http://127.0.0.1:8787 (also AI_DEMO_PLANNER=1 for a keyless demo)
+
+# production: one process serves the built SPA and the API
+npm run build
+npm start                            # serves dist/ + /api/ai/plan on PORT (default 8787)
+```
+
+Configuration: `DEEPSEEK_API_KEY` (required), `DEEPSEEK_MODEL` (default `deepseek-flash`),
+`AI_TIMEOUT_MS`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
+`docs/AI_ARCHITECT.md`. Manual live-API test (spends tokens): `DEEPSEEK_API_KEY=sk-... npm run test:ai-manual`.
+
+#### Deploying on Vercel
+
+Vercel uses the serverless handlers in `api/ai/plan.mjs` and `api/ai/health.mjs`; it does not run
+the standalone `npm start` server for a static Vite deployment. In **Vercel → Project → Settings →
+Environment Variables**, set `DEEPSEEK_API_KEY` to your actual DeepSeek API key for **Preview** and
+**Production** (and Development if needed). Do not prefix it with `VITE_`, and never commit it.
+Redeploy after changing the variable. Check `/api/ai/health`: `aiConfigured: true` means the key
+is available to that deployment; `false` means the serverless route is running but DeepSeek is not
+configured. Local `npm run dev` still needs `npm run server` running separately.
 
 See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and the tested sandbox setup. Build output currently includes Vite's informational warning that the Three.js application chunk exceeds 500 kB; see [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
@@ -63,9 +93,11 @@ src/app/         Undo/redo history and command registry
 src/persistence/ Browser autosave/recovery
 src/ui/          Ribbon, browser, view tabs, properties, read-only elevation renderer and workspace controls
 src/App.tsx      Application shell and model-command wiring
-e2e/             Four Puppeteer browser workflows
+src/ai/          AI Architect: DesignPlan schema, transactional apply engine, project context
+server/          AI server: DeepSeek endpoint (key stays server-side) and static SPA hosting
+e2e/             Puppeteer browser workflows (slice 1 to slice 6, incl. the AI Architect)
 src/__tests__/   Vitest unit/integration/regression tests
-docs/            Scope, architecture, roadmap, tests, limitations and Revit/APS audit
+docs/            Scope, architecture, roadmap, tests, limitations, Revit/APS audit and AI design
 ```
 
 ## Units and coordinates

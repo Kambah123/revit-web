@@ -41,6 +41,11 @@ The five suites are intentionally run serially by `e2e:all`; they reset/use brow
 | Schema and migration | `schema.test.ts` | Stable JSON round trips, malformed files, v1/v2/v3 migration to schema v4. |
 | History | `history.test.ts` | Immutable snapshot undo/redo, revisions and limits. |
 | Autosave | `autosave.test.ts` | Save/read/clear and corrupt-slot handling. |
+| AI units | `aiUnits.test.ts` | mm/cm/m/ft/in conversion to integer mm, range and garbage rejection. |
+| AI plan schema | `aiPlanSchema.test.ts` | DesignPlan parsing, malformed/malicious responses, refs, boundaries, views, duplicate opIds, plan caps. |
+| AI apply | `aiApply.test.ts` | New-building generation, hip roof on an existing building, room resize with stable ids, door/window host refusals, atomic failure recovery, delete cascades, undo/redo of a whole plan. |
+| AI prompt sync | `aiPromptSync.test.ts` | The server system prompt documents exactly the validator's op kinds; the prompt example is itself a valid plan. |
+| AI server | `aiServer.test.mjs` | Request validation, per-IP rate limit, timeout, upstream error mapping, empty-content retry, API-key protection, demo planner labelling (DeepSeek mocked over local HTTP). |
 
 Integration assertions exercise command → canonical model → derived geometry/quantities and JSON serialize → parse identity. No test treats a rendered mesh as the canonical model.
 
@@ -55,12 +60,19 @@ All suites use `puppeteer-core` with Chromium, exercise the running app UI, and 
 | `e2e/slice3.e2e.mjs` | Ribbon/workspace, command launcher, Project Browser, view tabs/controls, panel and shortcut workflows. |
 | `e2e/slice4.e2e.mjs` | Ceiling/hip-roof creation and editing, geometry/rendering, invalid roof boundary, undo/redo. |
 | `e2e/slice5.e2e.mjs` | Generated north/east elevations, level datums/roof silhouette, read-only behavior, tab switching/closing and model preservation. |
+| `e2e/slice6-ai.e2e.mjs` | AI Architect (DeepSeek mocked at the network layer): panel status, plan preview before apply, applied plan creating genuine walls/openings/room/floor/hip-roof with integer-mm geometry and host links, undo/redo of the whole plan, conversational room edit by name (stable id), elevation tabs from `view.open`, unsupported section requests explained with alternatives. |
+
+## Manual AI integration test (real DeepSeek)
+
+`npm run test:ai-manual` with `DEEPSEEK_API_KEY` set calls the real DeepSeek API once (spends tokens) and reports whether the model returns a DesignPlan-shaped response with the expected operations. It is never part of the automated suite; everything else mocks DeepSeek.
 
 Screenshots are written to the ignored E2E screenshot directory. Visual review is part of acceptance; assertion-only success does not prove that geometry or colors render correctly.
 
 ## Current verification record
 
-The exact latest commands/results and counts are maintained in [`PROGRESS.md`](PROGRESS.md). The wall-material patch adds a command regression and browser coverage; the base branch also adds model-derived elevations and their projection/browser tests. The production build has an informational Vite warning when the main JS chunk exceeds 500 kB; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+The exact latest commands/results and counts are maintained in [`PROGRESS.md`](PROGRESS.md). The wall-material patch adds a command regression and browser coverage; the base branch also adds model-derived elevations and their projection/browser tests, and the AI Architect adds its own unit, integration, server and browser coverage. The production build has an informational Vite warning when the main JS chunk exceeds 500 kB; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+
+Screenshots land in the ignored `e2e/screenshots/` directory and are inspected for visual defects; passing assertions alone are not accepted as proof of correct appearance.
 
 ## Regression policy
 

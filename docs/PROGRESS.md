@@ -2,6 +2,67 @@
 
 Latest state first. Record only executed commands/results; historical sessions follow current status.
 
+## Session 2026-10-12 (second) — DeepSeek AI Architect (slices A–G)
+
+**Branch/commit at start:** `arena/673afcb7-revit-web` @ `9a28692` (clean; slices 1–5 already merged).
+
+**Baseline measured:** `tsc` clean, 94 unit tests pass, `npm run build` passes (three.js chunk warning, known).
+
+**Audit:** schema v4 model + command layer + whole-project validation + derived geometry (incl. hip
+roofs) + generated elevations + undo/redo history + autosave. No backend existed. Sections and
+dimensions/annotations are honest stubs (roadmap M4). Design and API research (official DeepSeek
+docs: `deepseek-flash`/`deepseek-v4-pro`, `response_format: json_object`, concurrency-based rate
+limits, current pricing) recorded in `docs/AI_ARCHITECT.md`.
+
+**Slice A (`b26b29f`):** `docs/AI_ARCHITECT.md` — audit, DeepSeek research, typed DesignPlan IR design, flow, security, env vars, limits.
+
+**Slice B (`030f08d`):** dependency-free Node server (`server/`): `POST /api/ai/plan` (request
+validation, per-IP rate limit, upstream timeout, safe typed errors, one empty-content retry for
+JSON mode), `GET /api/ai/health`, static SPA hosting with traversal/sensitive-path protection.
+`DEEPSEEK_API_KEY`/`DEEPSEEK_MODEL`/`DEEPSEEK_BASE_URL` from server env only; Vite proxies `/api`.
+Verified: 14 server tests with a mocked DeepSeek (key never in responses, 400/405/415/429/502/503/504 mapping).
+
+**Slice C (`79737de`):** `src/ai/` DesignPlan IR (27 ops mapping 1:1 to real commands), explicit
+unit conversion (mm/cm/m/ft/in → integer mm), strict validator with readable errors, op preview
+labels, quick-apply heuristics; prompt/validator sync test. Verified: 21 new checks.
+
+**Slices D/E engine (`8fcadd9`):** `applyPlan.ts` transactional executor through
+`src/model/commands.ts` (refs id/opId/name, stable identities, atomic, per-op outcomes, view
+requests); `context.ts` compact project context (never the whole file); `apiClient.ts`; additive
+`addOpeningType`/`updateOpeningType`/`deleteOpeningType` commands (mirror `addWallType`). Verified:
+12 integration tests — new-building generation (walls+rooms+slab+door+2 windows+hip roof all real
+entities), hip roof on existing building, room resize keeping identity, wall edit with stable id
+and intact host links, door/window fit refusals, atomic recovery (mid-plan failure leaves the model
+untouched), cascades, undo/redo as one history step.
+
+**Slices D/E/F UI (`6dba1e5`):** `AiArchitectPanel` (status, preview cards with
+summary/assumptions/clarifications/unsupported+alternatives, validated op list, Apply/Quick
+apply/Cancel/Retry, suggestions, disclaimer) wired into the workspace (ribbon + launcher command,
+one history commit, requested views opened, first created element selected). e2e `slice6-ai.e2e.mjs`
+8 checks with DeepSeek mocked at the network layer; caught and fixed a real bug (model edits must
+not run inside a React state updater under StrictMode) and a static-server fallback leak
+(`/.git/config` now 404s). Screenshots inspected (`slice6-ai-preview/applied/elevation/unsupported`
+— genuine punched walls, hip roof, Properties editing a real wall, two-digit op numbering fixed,
+header/scroll clipping fixed).
+
+**Slice G (this commit):** `server/manualTest.mjs` (manual live-API test), README/TESTING/
+KNOWN_LIMITATIONS/AI_ARCHITECT updates.
+
+**Merge with main:** after the slices above, merged `origin/main` (PR #4: wall type material
+selector + colour rendering, Autodesk Revit API/APS audit, docs restructure) resolving conflicts in
+README.md, package.json, docs/TESTING.md, docs/KNOWN_LIMITATIONS.md and docs/PROGRESS.md; both
+feature sets preserved (`e2e:all` now includes the AI suite).
+
+**Verified end-to-end (post-merge):** `tsc` clean; 142 unit/integration tests pass (16 files —
+model + AI + server; the extra test over the pre-merge 141 is PR #4's material command regression);
+`npm run build` passes; all six browser suites pass: slice1 18, slice2 11, slice3 14, slice4 9,
+slice5 11, slice6-ai 8 — **71 checks** total, no console/page/request errors.
+
+**Next task:** sections and dimensions when M4 lands (then the AI can offer them); streaming
+progress for long plans; shared rate limiter for multi-instance deployments.
+
+---
+
 ## Session 2026-10-12 — PR #4 branch synchronization with M4 elevation work
 
 **Branch:** `arena/11b23c70-revit-web`. The wall-material/audit commit `4843cc7` was synchronized with `origin/main` at `9a28692` (including elevation implementation commit `1ad8a1d`) so PR #4 can be merged against current `main`.
