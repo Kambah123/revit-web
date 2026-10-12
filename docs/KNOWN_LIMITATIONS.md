@@ -23,8 +23,9 @@ Kept current every slice. Newest items last within each section. (Session 2026-1
 
 ## Views
 
-- One plan view per active level with a fixed 1200 mm cut plane; no view ranges, RCP, elevations or sections yet.
+- One plan view per active level with a fixed 1200 mm cut plane; no view ranges, RCP or sections yet.
 - Plan symbology is basic: no door swings, break lines, or hatching (room floors show translucent fill only).
+- Elevations (N/S/E/W) are generated silhouettes: flat fills, no hatching/material patterns, no hidden-line depth; sections and callouts not yet.
 - No dimensions, text, tags, symbols, callouts, view templates or visibility filters yet.
 - Undo history is in memory and is not saved with the project.
 

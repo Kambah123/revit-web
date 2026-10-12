@@ -117,7 +117,7 @@ export const RIBBON_TABS: RibbonTab[] = [
       { id: "annotate", title: "Dimension", commands: ["annotate.alignedDim", "annotate.angularDim"] },
       { id: "annotate", title: "Detail", commands: ["annotate.detailLine", "annotate.text"] },
       { id: "annotate", title: "Tag", commands: ["annotate.tag", "annotate.roomTag"] },
-      { id: "annotate", title: "View", commands: ["view.section", "view.elevation", "view.callout"] },
+      { id: "annotate", title: "View", commands: ["view.section", "view.callout"] },
     ] as RibbonGroup[],
   },
   {
@@ -149,7 +149,7 @@ export const RIBBON_TABS: RibbonTab[] = [
     id: "view",
     title: "View",
     groups: [
-      { id: "view", title: "Create", commands: ["view.plan", "view.3d"] },
+      { id: "view", title: "Create", commands: ["view.plan", "view.3d", "view.elevation.north", "view.elevation.south", "view.elevation.east", "view.elevation.west"] },
       { id: "view", title: "Graphics", commands: ["view.wireframe", "view.hiddenLine", "view.shaded"] },
       { id: "view", title: "Windows", commands: ["view.resetCamera", "view.zoomFit"] },
     ] as RibbonGroup[],

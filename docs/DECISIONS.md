@@ -56,3 +56,13 @@ The 3D view renders every level (matching the idea of a default whole-model 3D v
 ## D12 — Polygon self-intersection fix (2026-10-12)
 
 The segment-intersection test compared orientation values instead of their signs, so non-intersecting edges with same-sign but unequal orientations could be reported as crossing (rejecting valid boundaries). Fixed to a strict sign test (`sign(o1)*sign(o2) === -1 && …`) plus endpoint-on-segment checks, with unit coverage for slanted quadrilaterals and pentagons.
+
+## D13 — Elevations: generated views, facade naming, viewer-right axis (2026-10-12)
+
+Elevations are derived views, never stored: `src/geometry/elevation.ts` projects the same solids the
+3D viewer uses onto a vertical plane. Naming follows the architectural convention (the "North"
+elevation shows the north facade, seen from the north). The horizontal axis `u` always increases to
+the viewer's right — north u=-x, south u=+x, east u=+y, west u=-y. Walls render as one face per wall
+(the split solid pieces around openings are unioned), openings as punched rectangles, and hip roofs
+as the convex hull of their projected vertices (trapezoid from the sides, triangle from the ends).
+Level datums draw over the building. Elevations are read-only: modelling shortcuts are inert there.
