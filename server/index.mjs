@@ -119,10 +119,13 @@ export async function handlePlanRequest(deps, rawBody, res) {
   let plan;
   let model = config.model;
   let usage = null;
+  const repairing = Boolean(checked.value.repair);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let result;
     try {
-      result = await callDeepSeek({ config, messages, fetchImpl });
+      // Repair attempts sample at temperature 0: the model must satisfy the listed problems, not
+      // redesign. The empty-content retry keeps the caller's temperature.
+      result = await callDeepSeek({ config, messages, fetchImpl, temperature: repairing ? 0 : undefined });
     } catch (error) {
       if (error instanceof DeepSeekError) {
         const status = error.code === "ai_rate_limited" ? 429 : error.code === "ai_timeout" ? 504 : error.code === "ai_bad_response" ? 502 : error.status === 401 || error.status === 403 ? 502 : 502;

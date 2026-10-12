@@ -32,6 +32,9 @@ const browser = await puppeteer.launch({
 
 const problems = [];
 const steps = [];
+/** Every /api/ai/plan body the panel sent, and the repair payloads among them. */
+const sentRequests = [];
+const repairAttempts = [];
 const step = (name) => {
   steps.push(name);
   console.log(`✓ ${name}`);
@@ -95,10 +98,60 @@ const SECTION_PLAN = {
   operations: [],
 };
 
+// A plan that parses but cannot be built: a 2 m window at 2.5 m in a 3 m wall. The deterministic
+// validator rejects it, so the client must ask the model to fix it (the "repair" request below).
+const BROKEN_PLAN = {
+  kind: "design-plan",
+  version: 1,
+  summary: "Add a small wall with a very wide window.",
+  assumptions: [],
+  clarifications: [],
+  unsupported: [],
+  operations: [
+    { op: "wall.add", opId: "w1", level: { name: "Level 1" }, start: { x: 0, y: 0 }, end: { x: 3000, y: 0 }, height: 2700 },
+    { op: "opening.add", opId: "win1", kind: "window", hostWall: { opId: "w1" }, offset: 2500, width: 2000, height: 1200, sillHeight: 900 },
+  ],
+};
+
+const REPAIRED_PLAN = {
+  kind: "design-plan",
+  version: 1,
+  summary: "Add a small wall with a 1.2 m window that fits.",
+  assumptions: ["Reduced the window to 1200 mm so it fits the 3000 mm wall"],
+  clarifications: [],
+  unsupported: [],
+  operations: [
+    { op: "wall.add", opId: "w1", level: { name: "Level 1" }, start: { x: 0, y: 0 }, end: { x: 3000, y: 0 }, height: 2700 },
+    { op: "opening.add", opId: "win1", kind: "window", hostWall: { opId: "w1" }, offset: 1500, width: 1200, height: 1200, sillHeight: 900 },
+  ],
+};
+
+// A plan that asks for missing information with selectable options.
+const CLARIFY_PLAN = {
+  kind: "design-plan",
+  version: 1,
+  summary: "Need one detail before designing the house.",
+  assumptions: [],
+  clarifications: [{ question: "How many bedrooms should the house have?", options: ["2 bedrooms", "3 bedrooms"] }],
+  unsupported: [],
+  operations: [],
+};
+
+const CLARIFY_ANSWER_PLAN = {
+  kind: "design-plan",
+  version: 1,
+  summary: "Understood: designing for 3 bedrooms.",
+  assumptions: [],
+  clarifications: [],
+  unsupported: [],
+  operations: [],
+};
+
 function planFor(message) {
   const text = message.toLowerCase();
   if (text.includes("section")) return SECTION_PLAN;
   if (text.includes("larger")) return ENLARGE_PLAN;
+  if (text.includes("bedrooms should the house have") || text.includes("design a house")) return CLARIFY_PLAN;
   return STUDIO_PLAN;
 }
 
@@ -128,11 +181,28 @@ try {
     }
     if (url.endsWith("/api/ai/plan") && req.method() === "POST") {
       const body = JSON.parse(req.postData() ?? "{}");
+      const message = String(body.message ?? "");
+      sentRequests.push(body);
+      if (body.repair) {
+        // The client must have sent the validator's own problems with the rejected json.
+        repairAttempts.push({ errors: body.repair.errors ?? [], plan: body.repair.plan ?? null, message });
+      }
+      let plan;
+      if (message.toLowerCase().includes("fit a window")) {
+        // First answer is unbuildable; the repair request gets the corrected one.
+        plan = body.repair ? REPAIRED_PLAN : BROKEN_PLAN;
+      } else if (message.toLowerCase().includes("design a house")) {
+        plan = CLARIFY_PLAN;
+      } else if (message.toLowerCase().includes("bedrooms")) {
+        plan = CLARIFY_ANSWER_PLAN;
+      } else {
+        plan = planFor(message);
+      }
       return req.respond({
         status: 200,
         contentType: "application/json",
         headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ plan: planFor(String(body.message ?? "")), model: "deepseek-flash", demo: false, usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
+        body: JSON.stringify({ plan, model: "deepseek-flash", demo: false, usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } }),
       });
     }
     return req.continue();
@@ -284,6 +354,67 @@ try {
   project = await model();
   assert.equal(project.rooms[0].id, idBefore);
   assert.equal(project.walls.length, 4);
+
+  // 9. A plan that parses but cannot be built is repaired automatically, not silently dropped.
+  const wallsBefore = project.walls.length;
+  await type(".ai-input", "fit a window into a small 3 m wall");
+  await page.click(".ai-send");
+  await page.waitForFunction(
+    () => [...document.querySelectorAll(".ai-plan")].some((el) => el.textContent?.includes("Repaired automatically")),
+    { timeout: 20000 },
+  );
+  const repairText = await page.$$eval(".ai-plan", (els) => els[els.length - 1].textContent ?? "");
+  assert.ok(repairText.includes("auto-repaired") || repairText.includes("Repaired automatically"), "the repair is disclosed");
+  assert.equal(repairAttempts.length, 1, "exactly one automatic repair request");
+  assert.ok(
+    repairAttempts[0].errors.some((e) => /opening\.add/.test(e)),
+    `the validator's problem was sent back: ${JSON.stringify(repairAttempts[0].errors)}`,
+  );
+  assert.ok(
+    JSON.stringify(repairAttempts[0].plan ?? {}).includes("2500"),
+    "the rejected json is echoed back so the model can fix it",
+  );
+  const fitWall = await page.$eval(".ai-ops", (el) => el.textContent ?? "");
+  assert.ok(fitWall.includes("window"), "the repaired plan shows a window operation");
+  await page.screenshot({ path: `${SHOTS}/slice6-ai-repaired.png` });
+  step("unbuildable plan is auto-repaired with the validator's feedback");
+
+  // The repaired plan applies as genuine entities: one wall plus one fitting window.
+  await clickLastApply();
+  await sleep(400);
+  project = await model();
+  assert.equal(project.walls.length, wallsBefore + 1);
+  const fitted = project.openings[project.openings.length - 1];
+  assert.ok(fitted, "the fitted window was created");
+  const hostWall = project.walls.find((w) => w.id === fitted.hostWallId);
+  assert.equal(hostWall.end.x - hostWall.start.x, 3000);
+  assert.ok(fitted.offset + 600 <= 3000, "the repaired opening fits inside its host wall");
+  step("repaired plan applies as real geometry that satisfies the validator");
+
+  // 10. Clarification options are actionable: clicking one asks the follow-up question.
+  await type(".ai-input", "design a house");
+  await page.click(".ai-send");
+  await page.waitForSelector(".ai-clarify-options .ai-chip", { timeout: 15000 });
+  const options = await page.$$eval(".ai-clarify-options .ai-chip", (els) => els.map((el) => el.textContent ?? ""));
+  assert.ok(options.length >= 2, "the clarification lists selectable options");
+  const requestsBefore = sentRequests.length;
+  const plansBefore = await page.$$eval(".ai-plan", (els) => els.length);
+  await page.evaluate(() => {
+    const el = [...document.querySelectorAll(".ai-clarify-options .ai-chip")].find((b) => (b.textContent ?? "").includes("3 bedrooms"));
+    el.click();
+  });
+  // A new request must go out and a new plan card must arrive.
+  await page.waitForFunction((count) => document.querySelectorAll(".ai-plan").length > count, { timeout: 15000 }, plansBefore);
+  await sleep(300);
+  assert.ok(sentRequests.length > requestsBefore, "answering a clarification sends a new request");
+  const answered = sentRequests[sentRequests.length - 1];
+  assert.ok(
+    String(answered.message).includes("3 bedrooms") && String(answered.message).includes("How many bedrooms"),
+    `the answer carries the question: ${answered.message}`,
+  );
+  assert.ok(String(answered.message).includes("Answer to"), "the answer is phrased as a clarification answer");
+  await page.screenshot({ path: `${SHOTS}/slice6-ai-clarification.png` });
+  step("clarification options send the answer as a follow-up turn");
 
   assert.deepEqual(problems, [], `browser problems:\n${problems.join("\n")}`);
   console.log(`\nAll ${steps.length} AI e2e checks passed.`);

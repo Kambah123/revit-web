@@ -2,6 +2,48 @@
 
 Latest state first. Record only executed commands/results; historical sessions follow current status.
 
+## Session 2026-10-12 (third) — AI Architect self-repair loop
+
+**Branch/commit at start:** `arena/45e507a7-revit-web` @ `799bbc5` (clean; AI Architect from the previous session already merged).
+
+**Audit finding (the trigger):** the AI's *failure* path was the weak link, not its happy path.
+`retryLast()` claimed "Retrying with validation feedback…" but sent no feedback at all (a re-roll);
+an unbuildable-but-schema-valid plan produced a dead end ("This plan cannot be applied as
+proposed"); and the failed assistant json was truncated to 1 800 chars in history. `usage` was
+returned by the server and thrown away, so nobody could see what a request cost.
+
+**Fix — automatic repair loop (bounded, disclosed, testable):**
+- `src/ai/repair.ts` (new, React-free and injectable): `requestPlanWithAutoRepair` re-asks the model
+  **once** with the deterministic validator's own messages plus the json it rejected. Schema failures
+  and `applyPlan` geometry failures share the same path; `MAX_AUTO_REPAIRS = 1` guarantees no loop;
+  feedback is bounded (12 messages × 300 chars, deduped); the echoed json is the *parsed* plan
+  (lengths normalized to mm) when it parsed, the raw response when it did not.
+- Server: optional `repair { plan, errors }` in `POST /api/ai/plan`, validated (≤20 × 500 chars,
+  json ≤ 40 000 chars) and assembled into a "VALIDATION REPAIR REQUEST" block by `buildRepairSection`;
+  repairs sample at **temperature 0** (`AI_TEMPERATURE` configures ordinary requests, default 0.2);
+  the system prompt documents the contract (complete corrected json, keep valid operations, drop what
+  cannot be valid into `unsupported`).
+- UI: auto-repaired cards are tagged and report what was fixed; failed cards show the failing
+  operation and a "Try to fix" button that sends the same feedback (a real repair, honest label);
+  clarification options became actionable chips that send `Answer to "<question>": <answer>`;
+  provider `usage` is surfaced per plan and per session.
+
+**Verified:** `tsc --noEmit` clean; **163 unit/integration tests pass** (18 files; +21 over the
+pre-session 142: 14 repair-policy/loop tests, 1 end-to-end repair test through the real server with a
+mocked model, 3 server repair tests, 3 prompt/repair-block tests); `npm run build` passes (known
+three.js chunk warning).
+
+**Not verified here:** the two new browser checks in `e2e/slice6-ai.e2e.mjs` (auto-repair with the
+repair request asserted at the network layer, and clarification chips) could not be executed in this
+sandbox — no Chrome/Chromium binary is available (`CHROME_PATH` unset). They follow the existing
+suite's conventions and should be run with `npm run e2e:all` on a machine with Chromium.
+
+**Next ideas (not started):** stream partial plans for long designs; rotate to `deepseek-v4-pro` when
+a plan fails validation twice (cost-aware escalation); server-side daily token budget; a golden-prompt
+evaluation harness with buildability scoring.
+
+---
+
 ## Session 2026-10-12 (second) — DeepSeek AI Architect (slices A–G)
 
 **Branch/commit at start:** `arena/673afcb7-revit-web` @ `9a28692` (clean; slices 1–5 already merged).

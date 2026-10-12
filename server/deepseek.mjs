@@ -32,13 +32,14 @@ export function stripJsonFences(text) {
  * Calls DeepSeek chat completions with a hard timeout.
  *
  * @param {{
- *   config: { apiKey: string, model: string, baseUrl: string, timeoutMs: number, maxTokens: number },
+ *   config: { apiKey: string, model: string, baseUrl: string, timeoutMs: number, maxTokens: number, temperature?: number },
  *   messages: { role: string, content: string }[],
  *   fetchImpl?: typeof fetch,
- * }} options
+ *   temperature?: number,
+ * }} options `temperature` is a sampling override: repair attempts pass 0 so fixes stay literal.
  * @returns {Promise<{ content: string, model: string, usage: object | null }>}
  */
-export async function callDeepSeek({ config, messages, fetchImpl = fetch }) {
+export async function callDeepSeek({ config, messages, fetchImpl = fetch, temperature }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   try {
@@ -55,11 +56,12 @@ export async function callDeepSeek({ config, messages, fetchImpl = fetch }) {
           messages,
           response_format: { type: "json_object" },
           max_tokens: config.maxTokens,
-          temperature: 0.2,
+          temperature: temperature ?? config.temperature ?? 0.2,
           stream: false,
         }),
         signal: controller.signal,
       });
+
     } catch (error) {
       if (error && (error.name === "AbortError" || controller.signal.aborted)) {
         throw new DeepSeekError("ai_timeout", `DeepSeek did not respond within ${Math.round(config.timeoutMs / 1000)} s.`);

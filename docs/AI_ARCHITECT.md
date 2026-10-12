@@ -120,10 +120,57 @@ names/elevations, type catalogues, an element inventory (id + kind + key dimensi
 selection, active view, supported capabilities. It is never the whole serialized project and never
 contains secrets or unrelated user data.
 
-## 6. Privacy, security and limits
+## 6. Automatic repair loop (failures are not dead ends)
+
+A plan can be rejected in two places: `planSchema.ts` (the json does not match the IR) and
+`applyPlan.ts` (it parses, but the geometry does not fit the real model). Both used to be terminal
+for the user — they are now a single, bounded, self-correcting round trip.
+
+```
+attempt 1 ──► plan valid?  ── yes ──► preview → Apply
+                  │ no
+                  ▼
+        validator messages + the rejected json (as validated, lengths in mm)
+                  │
+                  ▼
+              attempt 2 (repair, temperature 0)
+                  │
+        valid → the repaired plan replaces the failed one, tagged "auto-repaired" and reported
+        invalid → the failure is shown with per-operation detail and a "Try to fix" button that
+                  sends the very same feedback again (a genuine repair, not a re-roll)
+```
+
+- **One extra request, hard-capped.** `MAX_AUTO_REPAIRS = 1` in `src/ai/repair.ts`; a repair request
+  is never itself auto-repaired, so a prompt cannot loop and cost cannot run away. A repair is only
+  attempted when there is something to report (`buildRepairPayload` returns null when no validator
+  message exists).
+- **The feedback is the validator's own words.** `operation 2 (opening.add): Window 2000 x 1200
+  would fall outside its host wall.` — machine-generated, specific, and already precise enough to fix.
+- **The json echoed back is the json the validator saw**: the *parsed* plan (lengths normalized to
+  integer millimetres) when it parsed, the raw response when it did not. It stays data: the server
+  echoes it into the prompt, never executes it.
+- **Feedback is bounded**: at most 12 messages, 300 characters each, whitespace-collapsed and
+  de-duplicated (`boundRepairErrors`); the server re-validates the same bounds (401/400 on abuse).
+- **Sampling changes for repairs**: `temperature: 0` so the model satisfies the listed problems
+  instead of redesigning (`AI_TEMPERATURE` sets the ordinary value, default 0.2).
+- **Repairs are disclosed, never silent.** The card is tagged `auto-repaired`, names the first fixed
+  problems, and reports how many extra requests it took. Request counts and tokens (session and
+  per plan) are shown in the panel, taken from the provider's `usage`.
+- **Clarifications are actionable.** A plan that asks a question with `options` renders them as
+  chips; clicking one sends `Answer to "<question>": <answer>` as the next turn, so the
+  clarification loop closes without retyping.
+
+The system prompt documents the contract ("REPAIR REQUESTS"): return the complete corrected json,
+keep every operation that was already valid, never repeat a listed mistake, and if an operation
+cannot be made valid, drop it into `unsupported` with an alternative — a smaller valid plan beats an
+invalid one.
+
+## 7. Privacy, security and limits
 
 - `DEEPSEEK_API_KEY` is read from server env only; responses and logs never include it.
 - Request validation: message ≤ 4 000 chars, history ≤ 30 turns, context ≤ 40 000 chars, body ≤ 256 kB.
+- Repair block validation: ≤ 20 messages of ≤ 500 chars each, rejected json ≤ 40 000 chars, echoed as
+  data only. It is untrusted text in the prompt (bounded and never executed), like any user message.
 - Per-IP sliding-window rate limit (default 10 requests/minute, `AI_RATE_LIMIT_PER_MIN`).
 - Upstream timeout (default 60 s, `AI_TIMEOUT_MS`) with `AbortController`; typed error codes:
   `ai_not_configured`, `ai_bad_request`, `ai_rate_limited`, `ai_timeout`, `ai_upstream`,
@@ -133,7 +180,7 @@ contains secrets or unrelated user data.
 - Conceptual-design disclaimers: the UI and the system prompt state that outputs are conceptual
   design, **not** building-code compliance or professional engineering.
 
-## 7. Testing
+## 8. Testing
 
 - `src/__tests__/aiUnits.test.ts` — unit conversion (mm/cm/m/ft/in) and dimension validation.
 - `src/__tests__/aiPlanSchema.test.ts` — plan parsing, malformed/unsupported responses.
@@ -144,10 +191,19 @@ contains secrets or unrelated user data.
   error mapping, API-key protection, demo planner labelling (DeepSeek mocked over local HTTP).
 - `e2e/slice6-ai.e2e.mjs` — browser workflow with the `/api/ai/plan` response mocked at the
   network layer: prompt → preview → apply → real walls/rooms in the canonical model → undo.
+- `src/__tests__/aiRepair.test.ts` — error bounding, repair payloads, and the loop against a fake
+  transport (schema-invalid, unbuildable via the real `applyPlan`, budget exhausted, transport error).
+- `src/__tests__/aiRepairEndToEnd.test.mjs` — the loop across the real boundary: client ⇄ request body ⇄
+  server (validation + prompt assembly) ⇄ mocked DeepSeek, asserting the problems and rejected json
+  reach the model and the repaired plan applies as verified geometry.
+- `server/mockModel.mjs` (`npm run mock:model`) — an offline stand-in for the model: it answers a
+  build request with a deliberately rejectable plan and fixes it generically on the repair request,
+  so the whole pipeline (including the repair loop) can be demonstrated and manually inspected
+  without a key or a token budget. Covered by `aiRepairEndToEnd.test.mjs`.
 - `server/manualTest.mjs` — **manual** integration test against the real DeepSeek API
   (`DEEPSEEK_API_KEY` required), never part of the automated suite.
 
-## 8. Environment variables
+## 9. Environment variables
 
 | Variable | Where | Default | Purpose |
 | --- | --- | --- | --- |
@@ -156,12 +212,13 @@ contains secrets or unrelated user data.
 | `DEEPSEEK_BASE_URL` | server | `https://api.deepseek.com` | OpenAI-compatible base URL (tests point this at a mock). |
 | `AI_TIMEOUT_MS` | server | `60000` | Upstream request timeout. |
 | `AI_MAX_TOKENS` | server | `8000` | `max_tokens` for the completion. |
+| `AI_TEMPERATURE` | server | `0.2` | Sampling temperature for ordinary requests (repairs always use 0). |
 | `AI_RATE_LIMIT_PER_MIN` | server | `10` | Per-IP request budget per minute. |
 | `AI_DEMO_PLANNER` | server | off | `1` = serve clearly-labelled deterministic demo plans when no API key is configured (preview/demo environments only). |
 | `PORT` | server | `8787` | HTTP port (API + static SPA in production). |
 | `SERVE_STATIC` | server | on | `0` disables serving `dist/` (API only). |
 
-## 9. Known limitations
+## 10. Known limitations
 
 - Roof generation supports **rectangular hip roofs** only (the engine's only roof type); gable,
   shed, mansard and free-form footprints are reported as `unsupported` with the hip alternative.
@@ -171,3 +228,7 @@ contains secrets or unrelated user data.
   the kitchen larger" resizes the room's boundary and the AI may also move the bounding walls.
 - The model can propose ill-fitting geometry; the executor refuses it with per-operation errors and
   leaves the model untouched (atomic). This is a feature: invalid AI output must never corrupt the BIM.
+- Auto-repair fixes *reported* failures (shape and geometry), not judgement: a plan that is valid but
+  architecturally poor still applies, so the preview and the assumptions remain the user's to review.
+  Repairs cost one extra request (and are reported); set `maxAutoRepairs: 0` in `src/ai/repair.ts`
+  callers to disable them.
