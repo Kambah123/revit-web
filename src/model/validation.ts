@@ -1,11 +1,13 @@
-import { boundaryError } from "../geometry/polygon";
+import { boundaryError, rectangleError } from "../geometry/polygon";
 import { MIN_WALL_LENGTH_MM, distanceMm } from "./geometry";
 import {
+  ceilingTypeById,
   columnTypeById,
   floorTypeById,
   levelById,
   materialById,
   openingTypeById,
+  roofTypeById,
   wallById,
   wallTypeById,
 } from "./project";
@@ -34,7 +36,7 @@ export function validateProject(p: Project): Issue[] {
   const warning = (code: string, message: string, entityId?: string) =>
     issues.push({ severity: "warning", code, message, entityId });
 
-  if (p.schemaVersion !== 3) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
+  if (p.schemaVersion !== 4) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
   if (p.units?.length !== "mm") error("units", "Project length unit must be millimetres.");
   if (!isInt(p.revision) || p.revision < 0) error("revision", "Revision must be a non-negative integer.");
 
@@ -49,6 +51,10 @@ export function validateProject(p: Project): Issue[] {
   checkUniqueIds(p.floors.map((x) => x.id), "floor", error);
   checkUniqueIds(p.rooms.map((x) => x.id), "room", error);
   checkUniqueIds(p.columns.map((x) => x.id), "column", error);
+  checkUniqueIds(p.ceilingTypes.map((x) => x.id), "ceiling type", error);
+  checkUniqueIds(p.roofTypes.map((x) => x.id), "roof type", error);
+  checkUniqueIds(p.ceilings.map((x) => x.id), "ceiling", error);
+  checkUniqueIds(p.roofs.map((x) => x.id), "roof", error);
 
   if (p.levels.length === 0) error("no-levels", "A project must keep at least one level.");
   for (const level of p.levels) {
@@ -194,6 +200,47 @@ export function validateProject(p: Project): Issue[] {
     }
     if (!isInt(column.height) || column.height <= 0) {
       error("column-height", `${label} needs a positive whole-millimetre height.`, column.id);
+    }
+  }
+
+  for (const type of p.ceilingTypes) {
+    if (type.name.trim() === "") error("ceiling-type-name", "Ceiling type names cannot be empty.", type.id);
+    if (!isInt(type.thickness) || type.thickness <= 0) {
+      error("ceiling-thickness", `${type.name} needs a positive whole-millimetre thickness.`, type.id);
+    }
+    if (!materialById(p, type.materialId)) error("ceiling-type-material", `${type.name} refers to a missing material.`, type.id);
+  }
+
+  for (const type of p.roofTypes) {
+    if (type.name.trim() === "") error("roof-type-name", "Roof type names cannot be empty.", type.id);
+    if (!isInt(type.thickness) || type.thickness <= 0) {
+      error("roof-thickness", `${type.name} needs a positive whole-millimetre thickness.`, type.id);
+    }
+    if (!materialById(p, type.materialId)) error("roof-type-material", `${type.name} refers to a missing material.`, type.id);
+  }
+
+  for (const ceiling of p.ceilings) {
+    const label = `Ceiling ${ceiling.id}`;
+    if (!levelById(p, ceiling.levelId)) error("ceiling-level", `${label} refers to a missing level.`, ceiling.id);
+    if (!ceilingTypeById(p, ceiling.ceilingTypeId)) error("ceiling-type", `${label} refers to a missing ceiling type.`, ceiling.id);
+    const boundaryMessage = boundaryError(ceiling.boundary);
+    if (boundaryMessage) error("ceiling-boundary", `${label}: ${boundaryMessage}`, ceiling.id);
+    if (!isInt(ceiling.height) || ceiling.height <= 0) {
+      error("ceiling-height", `${label} needs a positive whole-millimetre height.`, ceiling.id);
+    }
+  }
+
+  for (const roof of p.roofs) {
+    const label = `Roof ${roof.id}`;
+    if (!levelById(p, roof.levelId)) error("roof-level", `${label} refers to a missing level.`, roof.id);
+    if (!roofTypeById(p, roof.roofTypeId)) error("roof-type", `${label} refers to a missing roof type.`, roof.id);
+    const boundaryMessage = rectangleError(roof.boundary);
+    if (boundaryMessage) error("roof-boundary", `${label}: ${boundaryMessage}`, roof.id);
+    if (!isInt(roof.overhang) || roof.overhang < 0) {
+      error("roof-overhang", `${label} needs a whole-millimetre overhang of 0 or more.`, roof.id);
+    }
+    if (!isInt(roof.rise) || roof.rise <= 0) {
+      error("roof-rise", `${label} needs a positive whole-millimetre rise.`, roof.id);
     }
   }
 

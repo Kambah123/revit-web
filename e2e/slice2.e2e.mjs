@@ -171,7 +171,7 @@ try {
   const saved = readdirSync(DOWNLOADS).filter((f) => f.endsWith(".revit-web.json"));
   assert.equal(saved.length, 1, "one file downloaded");
   const savedObj = JSON.parse(readFileSync(join(DOWNLOADS, saved[0]), "utf8"));
-  assert.equal(savedObj.schemaVersion, 3);
+  assert.equal(savedObj.schemaVersion, 4);
   assert.equal(savedObj.floors.length, 1);
   assert.equal(savedObj.rooms.length, 1);
   assert.equal(savedObj.columns.length, 2);
@@ -207,7 +207,7 @@ try {
   await sleep(400);
   project = await model();
   assert.equal(project.name, "V2 legacy");
-  assert.equal(project.schemaVersion, 3);
+  assert.equal(project.schemaVersion, 4);
   assert.equal(project.materials.length, 1);
   assert.equal(project.wallTypes[0].materialId, project.materials[0].id);
   assert.equal(project.walls.length, 1);

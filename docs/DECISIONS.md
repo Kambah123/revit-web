@@ -42,3 +42,17 @@ Boundary polygons: ≥3 vertices, integer mm, no consecutive duplicates, non-sel
 ## D9 — Quantity values are derived, never stored
 
 Room area, floor area/perimeter/volume, wall net volume etc. live in `src/model/quantities.ts` and are computed on demand from geometry/parameters. Schedules and properties read them; nothing stores a quantity that could drift.
+
+## D10 — Schema v4: ceilings and simple hip roofs (2026-10-12)
+
+- `Ceiling`: boundary polygon + `height` (top face above the level) + type (thickness, material). A reflected ceiling plan is a later view milestone; ceilings render in plan translucently and solid in 3D.
+- `Roof`: axis-aligned **rectangular** footprint + `overhang` (expands the footprint outward) + `rise` (ridge height above the level). Geometry is a classic hip roof: the ridge runs along the longer axis and is inset by half the shorter side; four sloped faces plus a flat soffit close the volume. Free-form roofs, gable ends and slope-as-angle arrive later (M6).
+- Migration v3→v4 seeds one ceiling type and one roof type referencing the file's first material.
+
+## D11 — 3D view shows all levels; plan keeps the level rule (2026-10-12)
+
+The 3D view renders every level (matching the idea of a default whole-model 3D view), while the plan of a level still shows only that level and those below it as underlay. This surfaced as a visual defect in slice-4 e2e screenshots (a roof on Level 2 was invisible in 3D while a Level 1 element was active) and was fixed in the same slice.
+
+## D12 — Polygon self-intersection fix (2026-10-12)
+
+The segment-intersection test compared orientation values instead of their signs, so non-intersecting edges with same-sign but unequal orientations could be reported as crossing (rejecting valid boundaries). Fixed to a strict sign test (`sign(o1)*sign(o2) === -1 && …`) plus endpoint-on-segment checks, with unit coverage for slanted quadrilaterals and pentagons.

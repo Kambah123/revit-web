@@ -1,6 +1,8 @@
 import { newId } from "./ids";
 import {
   SCHEMA_VERSION,
+  type Ceiling,
+  type CeilingType,
   type Column,
   type ColumnType,
   type Floor,
@@ -10,6 +12,8 @@ import {
   type Opening,
   type OpeningType,
   type Project,
+  type Roof,
+  type RoofType,
   type Room,
   type Wall,
   type WallType,
@@ -18,6 +22,8 @@ import {
 export const DEFAULT_WALL_HEIGHT_MM = 3000;
 export const DEFAULT_COLUMN_HEIGHT_MM = 3000;
 export const DEFAULT_FLOOR_THICKNESS_MM = 200;
+export const DEFAULT_CEILING_THICKNESS_MM = 50;
+export const DEFAULT_ROOF_THICKNESS_MM = 200;
 
 export function createProject(name = "Untitled project"): Project {
   const materials: Material[] = [
@@ -38,6 +44,12 @@ export function createProject(name = "Untitled project"): Project {
   const columnTypes: ColumnType[] = [
     { id: newId("ct"), name: "Column - 300 x 300", width: 300, depth: 300, materialId: concrete },
   ];
+  const ceilingTypes: CeilingType[] = [
+    { id: newId("cet"), name: "Ceiling - 50 mm", thickness: DEFAULT_CEILING_THICKNESS_MM, materialId: generic },
+  ];
+  const roofTypes: RoofType[] = [
+    { id: newId("rt"), name: "Roof - 200 mm", thickness: DEFAULT_ROOF_THICKNESS_MM, materialId: concrete },
+  ];
   const openingTypes: OpeningType[] = [
     { id: newId("ot"), name: "Door 900 x 2100", kind: "door", width: 900, height: 2100, sillHeight: 0 },
     { id: newId("ot"), name: "Window 1200 x 1200", kind: "window", width: 1200, height: 1200, sillHeight: 900 },
@@ -56,12 +68,16 @@ export function createProject(name = "Untitled project"): Project {
     wallTypes,
     floorTypes,
     columnTypes,
+    ceilingTypes,
+    roofTypes,
     openingTypes,
     walls: [],
     openings: [],
     floors: [],
     rooms: [],
     columns: [],
+    ceilings: [],
+    roofs: [],
   };
 }
 
@@ -103,6 +119,22 @@ export function floorTypeById(p: Project, id: string): FloorType | undefined {
 
 export function columnTypeById(p: Project, id: string): ColumnType | undefined {
   return p.columnTypes.find((t) => t.id === id);
+}
+
+export function ceilingById(p: Project, id: string): Ceiling | undefined {
+  return p.ceilings.find((c) => c.id === id);
+}
+
+export function roofById(p: Project, id: string): Roof | undefined {
+  return p.roofs.find((r) => r.id === id);
+}
+
+export function ceilingTypeById(p: Project, id: string): CeilingType | undefined {
+  return p.ceilingTypes.find((t) => t.id === id);
+}
+
+export function roofTypeById(p: Project, id: string): RoofType | undefined {
+  return p.roofTypes.find((t) => t.id === id);
 }
 
 export function openingTypeById(p: Project, id: string): OpeningType | undefined {

@@ -1,6 +1,6 @@
 import type { Point, Polygon, Project } from "../model/types";
 import { levelById } from "../model/project";
-import { polygonAbsAreaMm2, polygonCentroid } from "./polygon";
+import { polygonAbsAreaMm2, polygonBounds, polygonCentroid } from "./polygon";
 
 /**
  * Derived geometry for floors, columns and rooms, in millimetres. Pure functions of the canonical
@@ -99,4 +99,104 @@ export function roomFaces(p: Project, visibleLevelIds: Set<string>): RoomFace[] 
     });
   }
   return faces;
+}
+
+export interface CeilingSlab {
+  ceilingId: string;
+  levelId: string;
+  boundary: Polygon;
+  /** Bottom face (top minus thickness), mm. */
+  z0: number;
+  /** Top face: level elevation plus the ceiling height, mm. */
+  z1: number;
+  materialId: string;
+}
+
+/** Ceiling panels on visible levels: a horizontal slab whose top is `height` above the level. */
+export function ceilingSlabs(p: Project, visibleLevelIds: Set<string>): CeilingSlab[] {
+  const slabs: CeilingSlab[] = [];
+  for (const ceiling of p.ceilings) {
+    if (!visibleLevelIds.has(ceiling.levelId)) continue;
+    const level = levelById(p, ceiling.levelId);
+    const type = p.ceilingTypes.find((t) => t.id === ceiling.ceilingTypeId);
+    if (!level || !type) continue;
+    const z1 = level.elevation + ceiling.height;
+    slabs.push({
+      ceilingId: ceiling.id,
+      levelId: ceiling.levelId,
+      boundary: ceiling.boundary,
+      z0: z1 - type.thickness,
+      z1,
+      materialId: type.materialId,
+    });
+  }
+  return slabs;
+}
+
+/**
+ * A hip roof derived from its rectangular footprint, overhang and rise (DECISIONS.md D10).
+ * The footprint is expanded outward by the overhang; the ridge runs along the longer axis and is
+ * inset from the ends by half the shorter side, forming two trapezoid slopes and two hip ends.
+ */
+export interface RoofSolid {
+  roofId: string;
+  levelId: string;
+  /** Expanded footprint bounds in plan, mm. */
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  /** Eaves elevation (the level), mm. */
+  z0: number;
+  /** Ridge elevation (level + rise), mm. */
+  z1: number;
+  /** Ridge endpoints in plan, mm. */
+  ridgeA: Point;
+  ridgeB: Point;
+  materialId: string;
+}
+
+export function roofSolids(p: Project, visibleLevelIds: Set<string>): RoofSolid[] {
+  const solids: RoofSolid[] = [];
+  for (const roof of p.roofs) {
+    if (!visibleLevelIds.has(roof.levelId)) continue;
+    const level = levelById(p, roof.levelId);
+    const type = p.roofTypes.find((t) => t.id === roof.roofTypeId);
+    if (!level || !type) continue;
+    const bounds = polygonBounds(roof.boundary);
+    const o = roof.overhang;
+    const minX = bounds.minX - o;
+    const minY = bounds.minY - o;
+    const maxX = bounds.maxX + o;
+    const maxY = bounds.maxY + o;
+    const w = maxX - minX;
+    const d = maxY - minY;
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
+    let ridgeA: Point;
+    let ridgeB: Point;
+    if (w >= d) {
+      const half = d / 2;
+      ridgeA = { x: minX + half, y: midY };
+      ridgeB = { x: maxX - half, y: midY };
+    } else {
+      const half = w / 2;
+      ridgeA = { x: midX, y: minY + half };
+      ridgeB = { x: midX, y: maxY - half };
+    }
+    solids.push({
+      roofId: roof.id,
+      levelId: roof.levelId,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      z0: level.elevation,
+      z1: level.elevation + roof.rise,
+      ridgeA,
+      ridgeB,
+      materialId: type.materialId,
+    });
+  }
+  return solids;
 }

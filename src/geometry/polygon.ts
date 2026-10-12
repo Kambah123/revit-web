@@ -95,7 +95,13 @@ export function segmentsIntersect(a: Point, b: Point, c: Point, d: Point): boole
   if (o2 === 0 && onSegment(a, b, d)) return true;
   if (o3 === 0 && onSegment(c, d, a)) return true;
   if (o4 === 0 && onSegment(c, d, b)) return true;
-  return o1 !== o2 && o3 !== o4;
+  // Strict crossing: the endpoints of each segment lie on opposite sides of the other.
+  // Compare signs (not values) and keep the product small to stay in safe integer range.
+  const s1 = Math.sign(o1);
+  const s2 = Math.sign(o2);
+  const s3 = Math.sign(o3);
+  const s4 = Math.sign(o4);
+  return s1 * s2 === -1 && s3 * s4 === -1;
 }
 
 /**
@@ -157,4 +163,24 @@ export function boundaryError(poly: unknown): string | null {
   if (isSelfIntersecting(points)) return "A boundary cannot cross itself.";
   if (polygonArea2(points) === 0) return "A boundary cannot have zero area.";
   return null;
+}
+
+/**
+ * Checks that a polygon is an axis-aligned rectangle (the simple roof footprint rule).
+ * Returns a readable message or null. Vertices may start at any corner and run either direction.
+ */
+export function rectangleError(poly: unknown): string | null {
+  const base = boundaryError(poly);
+  if (base) return base;
+  const points = poly as Polygon;
+  if (points.length !== 4) return "A roof footprint must be a rectangle with four points.";
+  const xs = [...new Set(points.map((p) => p.x))];
+  const ys = [...new Set(points.map((p) => p.y))];
+  if (xs.length !== 2 || ys.length !== 2) return "A roof footprint must be an axis-aligned rectangle.";
+  return null;
+}
+
+/** Bounds of an axis-aligned rectangle polygon. Call after `rectangleError` returned null. */
+export function rectangleBounds(poly: Polygon): { minX: number; minY: number; maxX: number; maxY: number } {
+  return polygonBounds(poly);
 }

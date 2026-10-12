@@ -2,23 +2,29 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
 import { RIBBON_TABS, type CommandSpec, type RibbonTabId } from "./app/ribbon";
 import {
+  addCeiling,
   addColumn,
   addFloor,
   addLevel,
   addOpening,
+  addRoof,
   addRoom,
   addWall,
+  deleteCeiling,
   deleteColumn,
   deleteFloor,
   deleteLevel,
   deleteOpening,
+  deleteRoof,
   deleteRoom,
   deleteWall,
   renameLevel,
   setLevelElevation,
+  updateCeiling,
   updateColumn,
   updateFloor,
   updateOpening,
+  updateRoof,
   updateRoom,
   updateWall,
   updateWallType,
@@ -189,7 +195,7 @@ export function App() {
     if (tool === "wall") {
       sceneRef.current?.setPreview(pendingStart, cursor);
       sceneRef.current?.setPolygonPreview(null, null);
-    } else if (tool === "floor" || tool === "room") {
+    } else if (isBoundaryTool(tool)) {
       sceneRef.current?.setPreview(null, null);
       sceneRef.current?.setPolygonPreview(pendingPoints, cursor);
     } else {
@@ -268,7 +274,7 @@ export function App() {
           changeTool("select");
           setSelection(null);
         }
-      } else if (event.key === "Enter" && (ctx.current.tool === "floor" || ctx.current.tool === "room")) {
+      } else if (event.key === "Enter" && isBoundaryTool(ctx.current.tool)) {
         event.preventDefault();
         closePolygon();
       } else if (event.key === "w" || event.key === "W") changeTool("wall");
@@ -277,6 +283,8 @@ export function App() {
       else if (event.key === "f" || event.key === "F") changeTool("floor");
       else if (event.key === "r" || event.key === "R") changeTool("room");
       else if (event.key === "c" || event.key === "C") changeTool("column");
+      else if (event.key === "e" || event.key === "E") changeTool("ceiling");
+      else if (event.key === "o" || event.key === "O") changeTool("roof");
       else if (event.key === "s" || event.key === "S") changeTool("select");
       else if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
     };
@@ -329,7 +337,7 @@ export function App() {
       }
       return;
     }
-    if (c.tool === "floor" || c.tool === "room") {
+    if (isBoundaryTool(c.tool)) {
       const at = snapToEndpoint(point);
       const pts = c.pendingPoints;
       // Clicking the first point closes the boundary.
@@ -425,6 +433,44 @@ export function App() {
         setPendingPoints([]);
         setSelection({ kind: "room", id: created });
       }
+      return;
+    }
+    if (c.tool === "ceiling") {
+      let created: string | null = null;
+      const ok = c.run(
+        "Add ceiling",
+        (p) => {
+          const typeId = p.ceilingTypes[0]?.id;
+          if (!typeId) throw new Error("Create a ceiling type before adding ceilings.");
+          const result = addCeiling(p, c.activeId, typeId, pts);
+          created = result.ceiling.id;
+          return result.project;
+        },
+        "Ceiling added. Select it to change its height or type.",
+      );
+      if (ok && created) {
+        setPendingPoints([]);
+        setSelection({ kind: "ceiling", id: created });
+      }
+      return;
+    }
+    if (c.tool === "roof") {
+      let created: string | null = null;
+      const ok = c.run(
+        "Add roof",
+        (p) => {
+          const typeId = p.roofTypes[0]?.id;
+          if (!typeId) throw new Error("Create a roof type before adding roofs.");
+          const result = addRoof(p, c.activeId, typeId, pts);
+          created = result.roof.id;
+          return result.project;
+        },
+        "Roof added (rectangular hip roof). Select it to change its overhang or rise.",
+      );
+      if (ok && created) {
+        setPendingPoints([]);
+        setSelection({ kind: "roof", id: created });
+      }
     }
   }
 
@@ -440,6 +486,10 @@ export function App() {
       if (run("Delete room", (p) => deleteRoom(p, selection.id), "Room deleted.")) setSelection(null);
     } else if (selection.kind === "column") {
       if (run("Delete column", (p) => deleteColumn(p, selection.id), "Column deleted.")) setSelection(null);
+    } else if (selection.kind === "ceiling") {
+      if (run("Delete ceiling", (p) => deleteCeiling(p, selection.id), "Ceiling deleted.")) setSelection(null);
+    } else if (selection.kind === "roof") {
+      if (run("Delete roof", (p) => deleteRoof(p, selection.id), "Roof deleted.")) setSelection(null);
     }
   }
 
@@ -546,7 +596,7 @@ export function App() {
   const kindLabel =
     selection === null
       ? ""
-      : { wall: "Wall", opening: "Opening", floor: "Floor", room: "Room", column: "Column" }[selection.kind];
+      : { wall: "Wall", opening: "Opening", floor: "Floor", room: "Room", column: "Column", ceiling: "Ceiling", roof: "Roof" }[selection.kind];
 
   function stub(id: string, title: string, description: string, tab: RibbonTabId | null, group: CommandSpec["group"]): CommandSpec {
     return { id, title, description, tab, group, implemented: false, run: () => undefined };
@@ -589,8 +639,6 @@ export function App() {
       },
       enabled: () => selection !== null,
     },
-    stub("tool.ceiling", "Ceiling", "Ceiling by boundary sketch.", "architecture", "build"),
-    stub("tool.roof", "Roof", "Roof by footprint with overhang.", "architecture", "build"),
     stub("tool.stair", "Stair", "Stair runs and landings.", "architecture", "circulation"),
     stub("tool.railing", "Railing", "Railings on stairs and edges.", "architecture", "circulation"),
     stub("tool.ramp", "Ramp", "Ramped elements.", "architecture", "circulation"),
@@ -657,6 +705,8 @@ export function App() {
       toolSpec("tool.floor", "floor", "Floor", "Draw a floor boundary and close it.", "F", "architecture", "build"),
       toolSpec("tool.room", "room", "Room", "Draw a room boundary; area is computed from it.", "R", "architecture", "build"),
       toolSpec("tool.column", "column", "Column", "Place a rectangular column.", "C", "architecture", "build"),
+      toolSpec("tool.ceiling", "ceiling", "Ceiling", "Draw a ceiling boundary and close it.", "E", "architecture", "build"),
+      toolSpec("tool.roof", "roof", "Roof", "Draw a rectangular hip roof footprint with overhang.", "O", "architecture", "build"),
     ];
   }
 
@@ -679,10 +729,12 @@ export function App() {
       ? pendingStart
         ? "Click the next point to continue the wall. Esc finishes."
         : `Click a start point on ${activeLevel?.name ?? "the active level"}. Ends snap to existing walls.`
-      : tool === "floor" || tool === "room"
+      : isBoundaryTool(tool)
         ? pendingPoints.length > 0
           ? `Boundary: ${pendingPoints.length} point(s). Click the first point or press Enter to close; Esc cancels.`
-          : `Click to draw the ${tool} boundary on ${activeLevel?.name ?? "the active level"}.`
+          : `Click to draw the ${tool} boundary on ${activeLevel?.name ?? "the active level"}.${
+              tool === "roof" ? " Roofs need a rectangular footprint." : ""
+            }`
         : tool === "column"
           ? `Click to place a column on ${activeLevel?.name ?? "the active level"}.`
           : tool === "door" || tool === "window"
@@ -846,6 +898,8 @@ export function App() {
               onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
               onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}
               onColumnPatch={(columnId, patch) => run("Edit column", (p) => updateColumn(p, columnId, patch))}
+              onCeilingPatch={(ceilingId, patch) => run("Edit ceiling", (p) => updateCeiling(p, ceilingId, patch))}
+              onRoofPatch={(roofId, patch) => run("Edit roof", (p) => updateRoof(p, roofId, patch))}
               onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
               onDeleteSelection={deleteSelection}
             />
@@ -922,7 +976,9 @@ function validSelection(p: Project, selection: Selection): Selection {
     (selection.kind === "opening" && openingById(p, selection.id)) ||
     (selection.kind === "floor" && p.floors.some((f) => f.id === selection.id)) ||
     (selection.kind === "room" && p.rooms.some((r) => r.id === selection.id)) ||
-    (selection.kind === "column" && p.columns.some((c) => c.id === selection.id));
+    (selection.kind === "column" && p.columns.some((c) => c.id === selection.id)) ||
+    (selection.kind === "ceiling" && p.ceilings.some((c) => c.id === selection.id)) ||
+    (selection.kind === "roof" && p.roofs.some((r) => r.id === selection.id));
   return found ? selection : null;
 }
 
@@ -952,10 +1008,33 @@ function selectionPoint(p: Project, selection: Selection): Point | null {
     const room = p.rooms.find((r) => r.id === selection.id);
     return room ? room.boundary[0] : null;
   }
+  if (selection.kind === "ceiling") {
+    const ceiling = p.ceilings.find((c) => c.id === selection.id);
+    return ceiling ? ceiling.boundary[0] : null;
+  }
+  if (selection.kind === "roof") {
+    const roof = p.roofs.find((r) => r.id === selection.id);
+    return roof ? roof.boundary[0] : null;
+  }
   const column = p.columns.find((c) => c.id === selection.id);
   return column ? column.position : null;
 }
 
 function labelFor(tool: Tool): string {
-  return { select: "Select", wall: "Wall", door: "Door", window: "Window", floor: "Floor", room: "Room", column: "Column" }[tool];
+  return {
+    select: "Select",
+    wall: "Wall",
+    door: "Door",
+    window: "Window",
+    floor: "Floor",
+    room: "Room",
+    column: "Column",
+    ceiling: "Ceiling",
+    roof: "Roof",
+  }[tool];
+}
+
+/** Tools that draw a closed boundary polygon chain (floor, room, ceiling, roof). */
+function isBoundaryTool(tool: Tool): boolean {
+  return tool === "floor" || tool === "room" || tool === "ceiling" || tool === "roof";
 }

@@ -2,14 +2,16 @@ import * as THREE from "three";
 import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { clipSolid, PLAN_CUT_HEIGHT_MM, projectGeometry, type OpeningVoid, type Solid } from "../geometry/wallSolids";
-import { columnSolids, floorSlabs, roomFaces, type FloorSlab, type RoomFace } from "../geometry/elementGeometry";
+import { ceilingSlabs, columnSolids, floorSlabs, roomFaces, roofSolids, type CeilingSlab, type FloorSlab, type RoomFace, type RoofSolid } from "../geometry/elementGeometry";
 import { snapPoint } from "../model/geometry";
 import { levelById, materialById } from "../model/project";
-import type { Point, Project } from "../model/types";
+import type { Point, Polygon, Project } from "../model/types";
 
 export type ViewMode = "plan" | "3d";
-export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column";
-export type Selection = { kind: "wall" | "opening" | "floor" | "room" | "column"; id: string } | null;
+export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column" | "ceiling" | "roof";
+export type Selection =
+  | { kind: "wall" | "opening" | "floor" | "room" | "column" | "ceiling" | "roof"; id: string }
+  | null;
 export type VisualStyle = "shaded" | "hiddenLine" | "wireframe";
 
 export interface SceneHandlers {
@@ -51,6 +53,8 @@ interface PickUserData {
   floorId?: string;
   roomId?: string;
   columnId?: string;
+  ceilingId?: string;
+  roofId?: string;
 }
 
 /** Pick priority when several meshes overlap under the pointer: lower wins. */
@@ -58,8 +62,10 @@ const PICK_PRIORITY: Record<string, number> = {
   openingId: 0,
   columnId: 1,
   wallId: 2,
-  floorId: 3,
-  roomId: 4,
+  roofId: 3,
+  floorId: 4,
+  ceilingId: 5,
+  roomId: 6,
 };
 
 /**
@@ -411,7 +417,11 @@ export class BimScene {
     const project = this.project;
     const active = levelById(project, this.activeLevelId);
     if (!active) return;
-    const visible = new Set(project.levels.filter((l) => l.elevation <= active.elevation).map((l) => l.id));
+    // Plan acts like a level view: lower levels show as underlay. The 3D view shows the whole model.
+    const visible =
+      this.view === "plan"
+        ? new Set(project.levels.filter((l) => l.elevation <= active.elevation).map((l) => l.id))
+        : new Set(project.levels.map((l) => l.id));
     const { solids, voids } = projectGeometry(project, visible, this.activeLevelId);
     // In plan, walls are cut at the view-range height, so openings are visible as gaps.
     const cut = this.view === "plan" ? active.elevation + PLAN_CUT_HEIGHT_MM : Infinity;
@@ -423,6 +433,8 @@ export class BimScene {
     const selectedFloorId = this.selection?.kind === "floor" ? this.selection.id : null;
     const selectedRoomId = this.selection?.kind === "room" ? this.selection.id : null;
     const selectedColumnId = this.selection?.kind === "column" ? this.selection.id : null;
+    const selectedCeilingId = this.selection?.kind === "ceiling" ? this.selection.id : null;
+    const selectedRoofId = this.selection?.kind === "roof" ? this.selection.id : null;
     const levelOfWall = new Map(project.walls.map((w) => [w.id, w.levelId]));
 
     for (const solid of clippedSolids) {
@@ -433,6 +445,12 @@ export class BimScene {
     for (const v of clippedVoids) this.addVoid(v);
     for (const slab of floorSlabs(project, visible)) {
       this.addFloorSlab(slab, slab.floorId === selectedFloorId);
+    }
+    for (const ceiling of ceilingSlabs(project, visible)) {
+      this.addCeilingSlab(ceiling, ceiling.ceilingId === selectedCeilingId);
+    }
+    for (const roof of roofSolids(project, visible)) {
+      this.addRoofMesh(roof, roof.roofId === selectedRoofId);
     }
     for (const c of columnSolids(project, visible)) {
       const material =
@@ -522,16 +540,87 @@ export class BimScene {
 
   /** Extrudes a floor slab from its boundary polygon. The top face is at the level elevation. */
   private addFloorSlab(slab: FloorSlab, selected: boolean): void {
-    const shape = new THREE.Shape(slab.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
-    const depth = (slab.z1 - slab.z0) * MM_TO_SCENE;
+    const material = selected ? this.materials.selected : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
+    const mesh = this.addSlabMesh(slab.boundary, slab.z0, slab.z1, material);
+    mesh.userData = { floorId: slab.floorId };
+  }
+
+  /** A ceiling panel: the same polygon slab, positioned by its height above the level. */
+  private addCeilingSlab(slab: CeilingSlab, selected: boolean): void {
+    const material = selected
+      ? this.materials.selected
+      : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
+    const mesh = this.addSlabMesh(slab.boundary, slab.z0, slab.z1, material);
+    mesh.userData = { ceilingId: slab.ceilingId };
+  }
+
+  /** Extrudes a boundary polygon between elevations z0..z1 and adds it to the model group. */
+  private addSlabMesh(boundary: Polygon, z0: number, z1: number, material: THREE.Material): THREE.Mesh {
+    const shape = new THREE.Shape(boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const depth = (z1 - z0) * MM_TO_SCENE;
     const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
     // Shape (x, -y) is rotated so the extrusion runs along world +Y and plan y maps to -z.
-    const material = selected ? this.materials.selected : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = slab.z0 * MM_TO_SCENE;
-    mesh.userData = { floorId: slab.floorId };
+    mesh.position.y = z0 * MM_TO_SCENE;
     this.modelGroup.add(mesh);
+    return mesh;
+  }
+
+  /**
+   * A hip roof: two trapezoid slopes, two hip ends and a flat soffit closing the volume. Built
+   * directly in world coordinates from the derived footprint and ridge.
+   */
+  private addRoofMesh(roof: RoofSolid, selected: boolean): void {
+    const at = (x: number, y: number, z: number) => new THREE.Vector3(x * MM_TO_SCENE, z * MM_TO_SCENE, -y * MM_TO_SCENE);
+    const c1 = at(roof.minX, roof.minY, roof.z0);
+    const c2 = at(roof.maxX, roof.minY, roof.z0);
+    const c3 = at(roof.maxX, roof.maxY, roof.z0);
+    const c4 = at(roof.minX, roof.maxY, roof.z0);
+    const r1 = at(roof.ridgeA.x, roof.ridgeA.y, roof.z1);
+    const r2 = at(roof.ridgeB.x, roof.ridgeB.y, roof.z1);
+    const positions: number[] = [];
+    const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+      positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    };
+    // Sides and hips (each quad as two triangles; DoubleSide material keeps winding harmless).
+    push(c1, r1, r2);
+    push(c1, r2, c2);
+    push(c3, r2, r1);
+    push(c3, r1, c4);
+    push(c2, r2, c3);
+    push(c4, r1, c1);
+    // Soffit closes the volume.
+    push(c1, c2, c3);
+    push(c1, c3, c4);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const base = selected
+      ? this.materials.selected
+      : this.materialForColor(this.typeMaterialColor(roof.materialId), COLOR.wall);
+    // Roofs use a DoubleSide variant of the base colour so sloped faces always shade correctly.
+    const material = this.doubleSideFor(base);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { roofId: roof.roofId };
+    this.modelGroup.add(mesh);
+  }
+
+  /** DoubleSide twin of a material, cached alongside the colour materials. */
+  private doubleSideFor(base: THREE.Material): THREE.Material {
+    const key = `//double//${base.uuid}`;
+    let material = this.colorMaterials.get(key);
+    if (!material) {
+      const source = base as THREE.MeshStandardMaterial;
+      material = new THREE.MeshStandardMaterial({
+        color: source.color ? source.color.clone() : new THREE.Color(COLOR.wall),
+        roughness: source.roughness ?? 0.85,
+        side: THREE.DoubleSide,
+        flatShading: source.flatShading ?? false,
+      });
+      this.colorMaterials.set(key, material);
+    }
+    return material;
   }
 
   /** Plan-only room fill and a canvas-texture label showing name and derived area. */
@@ -641,7 +730,7 @@ export class BimScene {
 
   /**
    * Picks under the pointer. Openings win over walls; among overlapping elements the pick priority
-   * list decides (openings, columns, walls, floors, rooms), so flat plan fills do not steal clicks.
+   * list decides, so flat plan fills do not steal clicks.
    */
   private pickAt(event: PointerEvent): Selection {
     this.setPointerFromEvent(event);
@@ -653,7 +742,7 @@ export class BimScene {
       const data = hit.object.userData as PickUserData;
       const choice = selectionFromUserData(data);
       if (!choice) continue;
-      const priority = PICK_PRIORITY[choice.kind === "wall" ? "wallId" : choice.kind === "opening" ? "openingId" : choice.kind === "floor" ? "floorId" : choice.kind === "column" ? "columnId" : "roomId"] ?? 99;
+      const priority = PICK_PRIORITY[SELECTION_KEY[choice.kind]] ?? 99;
       if (priority < bestPriority) {
         best = choice;
         bestPriority = priority;
@@ -663,11 +752,23 @@ export class BimScene {
   }
 }
 
+const SELECTION_KEY: Record<NonNullable<Selection>["kind"], keyof PickUserData> = {
+  wall: "wallId",
+  opening: "openingId",
+  floor: "floorId",
+  room: "roomId",
+  column: "columnId",
+  ceiling: "ceilingId",
+  roof: "roofId",
+};
+
 function selectionFromUserData(data: PickUserData): Selection {
   if (data.openingId) return { kind: "opening", id: data.openingId };
   if (data.columnId) return { kind: "column", id: data.columnId };
   if (data.wallId) return { kind: "wall", id: data.wallId };
+  if (data.roofId) return { kind: "roof", id: data.roofId };
   if (data.floorId) return { kind: "floor", id: data.floorId };
+  if (data.ceilingId) return { kind: "ceiling", id: data.ceilingId };
   if (data.roomId) return { kind: "room", id: data.roomId };
   return null;
 }

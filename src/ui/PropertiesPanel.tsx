@@ -4,16 +4,18 @@ import { joinedEnds } from "../model/joins";
 import { distanceMm } from "../model/geometry";
 import { formatMetres } from "../model/units";
 import {
+  ceilingTypeById,
   columnTypeById,
   floorTypeById,
   levelById,
   openingTypeById,
   openingsInWall,
+  roofTypeById,
   wallById,
   wallTypeById,
 } from "../model/project";
 import { floorAreaM2, floorPerimeterMm, floorVolumeMm3, projectQuantities, roomAreaM2 } from "../model/quantities";
-import type { Column, Floor, Opening, Project, Room, Wall } from "../model/types";
+import type { Ceiling, Column, Floor, Opening, Project, Roof, Room, Wall } from "../model/types";
 import type { Selection } from "../viewer/BimScene";
 
 interface PropertiesPanelProps {
@@ -25,6 +27,8 @@ interface PropertiesPanelProps {
   onFloorPatch(floorId: string, patch: Partial<Pick<Floor, "levelId" | "floorTypeId">>): void;
   onRoomPatch(roomId: string, patch: Partial<Pick<Room, "levelId" | "name" | "number">>): void;
   onColumnPatch(columnId: string, patch: Partial<Pick<Column, "levelId" | "columnTypeId" | "height">>): void;
+  onCeilingPatch(ceilingId: string, patch: Partial<Pick<Ceiling, "levelId" | "ceilingTypeId" | "height">>): void;
+  onRoofPatch(roofId: string, patch: Partial<Pick<Roof, "levelId" | "roofTypeId" | "overhang" | "rise">>): void;
   onSelectWall(wallId: string): void;
   onDeleteSelection(): void;
 }
@@ -36,12 +40,16 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   const floor = selection?.kind === "floor" ? project.floors.find((f) => f.id === selection.id) : undefined;
   const room = selection?.kind === "room" ? project.rooms.find((r) => r.id === selection.id) : undefined;
   const column = selection?.kind === "column" ? project.columns.find((c) => c.id === selection.id) : undefined;
+  const ceiling = selection?.kind === "ceiling" ? project.ceilings.find((c) => c.id === selection.id) : undefined;
+  const roof = selection?.kind === "roof" ? project.roofs.find((r) => r.id === selection.id) : undefined;
 
   if (wall) return <WallProperties {...props} wall={wall} />;
   if (opening) return <OpeningProperties {...props} opening={opening} />;
   if (floor) return <FloorProperties {...props} floor={floor} />;
   if (room) return <RoomProperties {...props} room={room} />;
   if (column) return <ColumnProperties {...props} column={column} />;
+  if (ceiling) return <CeilingProperties {...props} ceiling={ceiling} />;
+  if (roof) return <RoofProperties {...props} roof={roof} />;
 
   const q = projectQuantities(project);
   return (
@@ -366,6 +374,92 @@ function ColumnProperties({
         </p>
         <button className="danger wide" onClick={onDeleteSelection}>
           Delete column
+        </button>
+      </div>
+    </>
+  );
+}
+
+function CeilingProperties({
+  project,
+  ceiling,
+  onCeilingPatch,
+  onDeleteSelection,
+}: PropertiesPanelProps & { ceiling: Ceiling }) {
+  const type = ceilingTypeById(project, ceiling.ceilingTypeId);
+  return (
+    <>
+      <h2>Ceiling</h2>
+      <div className="props">
+        <LevelSelect project={project} value={ceiling.levelId} onPick={(levelId) => onCeilingPatch(ceiling.id, { levelId })} />
+        <label className="field">
+          <span>Ceiling type</span>
+          <select value={ceiling.ceilingTypeId} onChange={(e) => onCeilingPatch(ceiling.id, { ceilingTypeId: e.target.value })}>
+            {project.ceilingTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <NumberField
+          label="Height above level (mm)"
+          value={ceiling.height}
+          step={1}
+          integer
+          min={1}
+          onCommit={(mm) => onCeilingPatch(ceiling.id, { height: mm })}
+        />
+        <p className="muted">
+          {ceiling.boundary.length} boundary points
+          {type ? ` · thickness ${type.thickness} mm` : ""}
+        </p>
+        <button className="danger wide" onClick={onDeleteSelection}>
+          Delete ceiling
+        </button>
+      </div>
+    </>
+  );
+}
+
+function RoofProperties({ project, roof, onRoofPatch, onDeleteSelection }: PropertiesPanelProps & { roof: Roof }) {
+  const type = roofTypeById(project, roof.roofTypeId);
+  return (
+    <>
+      <h2>Roof</h2>
+      <div className="props">
+        <LevelSelect project={project} value={roof.levelId} onPick={(levelId) => onRoofPatch(roof.id, { levelId })} />
+        <label className="field">
+          <span>Roof type</span>
+          <select value={roof.roofTypeId} onChange={(e) => onRoofPatch(roof.id, { roofTypeId: e.target.value })}>
+            {project.roofTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <NumberField
+          label="Overhang (mm)"
+          value={roof.overhang}
+          step={1}
+          integer
+          min={0}
+          onCommit={(mm) => onRoofPatch(roof.id, { overhang: mm })}
+        />
+        <NumberField
+          label="Rise (mm)"
+          value={roof.rise}
+          step={1}
+          integer
+          min={1}
+          onCommit={(mm) => onRoofPatch(roof.id, { rise: mm })}
+        />
+        <p className="muted">
+          Rectangular hip roof{type ? ` · thickness ${type.thickness} mm at the eaves` : ""}
+        </p>
+        <button className="danger wide" onClick={onDeleteSelection}>
+          Delete roof
         </button>
       </div>
     </>

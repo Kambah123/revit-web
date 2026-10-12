@@ -1,8 +1,10 @@
-import { boundaryError } from "../geometry/polygon";
+import { boundaryError, rectangleError } from "../geometry/polygon";
 import { distanceMm, MIN_WALL_LENGTH_MM } from "./geometry";
 import { newId } from "./ids";
 import { firstError } from "./validation";
 import {
+  ceilingById,
+  ceilingTypeById,
   columnById,
   columnTypeById,
   floorById,
@@ -11,11 +13,15 @@ import {
   materialById,
   openingById,
   openingTypeById,
+  roofById,
+  roofTypeById,
   roomById,
   wallById,
   wallTypeById,
 } from "./project";
 import type {
+  Ceiling,
+  CeilingType,
   Column,
   ColumnType,
   Floor,
@@ -26,6 +32,8 @@ import type {
   Point,
   Polygon,
   Project,
+  Roof,
+  RoofType,
   Room,
   Wall,
   WallType,
@@ -63,7 +71,7 @@ export function setLevelElevation(p: Project, levelId: string, elevation: number
   return commit({ ...p, levels });
 }
 
-/** Deletes a level and cascades to every element on it: walls (with their openings), floors, rooms and columns. */
+/** Deletes a level and cascades to every element on it: walls (with their openings), floors, rooms, columns, ceilings and roofs. */
 export function deleteLevel(p: Project, levelId: string): Project {
   requireLevel(p, levelId);
   const removedWalls = new Set(p.walls.filter((w) => w.levelId === levelId).map((w) => w.id));
@@ -75,6 +83,8 @@ export function deleteLevel(p: Project, levelId: string): Project {
     floors: p.floors.filter((f) => f.levelId !== levelId),
     rooms: p.rooms.filter((r) => r.levelId !== levelId),
     columns: p.columns.filter((c) => c.levelId !== levelId),
+    ceilings: p.ceilings.filter((c) => c.levelId !== levelId),
+    roofs: p.roofs.filter((r) => r.levelId !== levelId),
   });
 }
 
@@ -101,7 +111,9 @@ export function deleteMaterial(p: Project, materialId: string): Project {
   const used =
     p.wallTypes.some((t) => t.materialId === materialId) ||
     p.floorTypes.some((t) => t.materialId === materialId) ||
-    p.columnTypes.some((t) => t.materialId === materialId);
+    p.columnTypes.some((t) => t.materialId === materialId) ||
+    p.ceilingTypes.some((t) => t.materialId === materialId) ||
+    p.roofTypes.some((t) => t.materialId === materialId);
   if (used) throw new Error("That material is assigned to a type. Reassign the type first.");
   if (p.materials.length <= 1) throw new Error("A project must keep at least one material.");
   return commit({ ...p, materials: p.materials.filter((m) => m.id !== materialId) });
@@ -397,6 +409,155 @@ export function updateColumn(p: Project, columnId: string, patch: ColumnPatch): 
 export function deleteColumn(p: Project, columnId: string): Project {
   if (!columnById(p, columnId)) throw new Error("Unknown column.");
   return commit({ ...p, columns: p.columns.filter((c) => c.id !== columnId) });
+}
+
+// ---------------------------------------------------------------------------
+// Ceilings and roofs
+// ---------------------------------------------------------------------------
+
+export function addCeilingType(
+  p: Project,
+  name: string,
+  thickness: number,
+  materialId?: string,
+): { project: Project; ceilingType: CeilingType } {
+  const mid = materialId ?? p.materials[0]?.id;
+  if (!mid || !materialById(p, mid)) throw new Error("Create a material before adding ceiling types.");
+  const ceilingType: CeilingType = { id: newId("cet"), name: name.trim(), thickness, materialId: mid };
+  return { project: commit({ ...p, ceilingTypes: [...p.ceilingTypes, ceilingType] }), ceilingType };
+}
+
+export function updateCeilingType(
+  p: Project,
+  ceilingTypeId: string,
+  patch: Partial<Pick<CeilingType, "name" | "thickness" | "materialId">>,
+): Project {
+  if (!ceilingTypeById(p, ceilingTypeId)) throw new Error("Unknown ceiling type.");
+  return commit({
+    ...p,
+    ceilingTypes: p.ceilingTypes.map((t) => (t.id === ceilingTypeId ? { ...t, ...patch } : t)),
+  });
+}
+
+export function deleteCeilingType(p: Project, ceilingTypeId: string): Project {
+  if (!ceilingTypeById(p, ceilingTypeId)) throw new Error("Unknown ceiling type.");
+  if (p.ceilings.some((c) => c.ceilingTypeId === ceilingTypeId)) {
+    throw new Error("That ceiling type is used by a ceiling. Delete or retype the ceilings first.");
+  }
+  return commit({ ...p, ceilingTypes: p.ceilingTypes.filter((t) => t.id !== ceilingTypeId) });
+}
+
+export function addCeiling(
+  p: Project,
+  levelId: string,
+  ceilingTypeId: string,
+  boundary: Polygon,
+  options: { height?: number } = {},
+): { project: Project; ceiling: Ceiling } {
+  requireLevel(p, levelId);
+  if (!ceilingTypeById(p, ceilingTypeId)) throw new Error("Unknown ceiling type.");
+  const ceiling: Ceiling = {
+    id: newId("ceil"),
+    levelId,
+    ceilingTypeId,
+    boundary: checkedBoundary(boundary),
+    height: options.height ?? 2700,
+  };
+  return { project: commit({ ...p, ceilings: [...p.ceilings, ceiling] }), ceiling };
+}
+
+export type CeilingPatch = Partial<Pick<Ceiling, "levelId" | "ceilingTypeId" | "boundary" | "height">>;
+
+export function updateCeiling(p: Project, ceilingId: string, patch: CeilingPatch): Project {
+  const existing = ceilingById(p, ceilingId);
+  if (!existing) throw new Error("Unknown ceiling.");
+  const updated: Ceiling = {
+    ...existing,
+    ...patch,
+    boundary: patch.boundary ? checkedBoundary(patch.boundary) : existing.boundary,
+  };
+  return commit({ ...p, ceilings: p.ceilings.map((c) => (c.id === ceilingId ? updated : c)) });
+}
+
+export function deleteCeiling(p: Project, ceilingId: string): Project {
+  if (!ceilingById(p, ceilingId)) throw new Error("Unknown ceiling.");
+  return commit({ ...p, ceilings: p.ceilings.filter((c) => c.id !== ceilingId) });
+}
+
+export function addRoofType(
+  p: Project,
+  name: string,
+  thickness: number,
+  materialId?: string,
+): { project: Project; roofType: RoofType } {
+  const mid = materialId ?? p.materials[0]?.id;
+  if (!mid || !materialById(p, mid)) throw new Error("Create a material before adding roof types.");
+  const roofType: RoofType = { id: newId("rt"), name: name.trim(), thickness, materialId: mid };
+  return { project: commit({ ...p, roofTypes: [...p.roofTypes, roofType] }), roofType };
+}
+
+export function updateRoofType(
+  p: Project,
+  roofTypeId: string,
+  patch: Partial<Pick<RoofType, "name" | "thickness" | "materialId">>,
+): Project {
+  if (!roofTypeById(p, roofTypeId)) throw new Error("Unknown roof type.");
+  return commit({
+    ...p,
+    roofTypes: p.roofTypes.map((t) => (t.id === roofTypeId ? { ...t, ...patch } : t)),
+  });
+}
+
+export function deleteRoofType(p: Project, roofTypeId: string): Project {
+  if (!roofTypeById(p, roofTypeId)) throw new Error("Unknown roof type.");
+  if (p.roofs.some((r) => r.roofTypeId === roofTypeId)) {
+    throw new Error("That roof type is used by a roof. Delete or retype the roofs first.");
+  }
+  return commit({ ...p, roofTypes: p.roofTypes.filter((t) => t.id !== roofTypeId) });
+}
+
+function checkedRoofBoundary(boundary: Polygon): Polygon {
+  const message = rectangleError(boundary);
+  if (message) throw new Error(message);
+  return boundary.map((pt) => ({ x: pt.x, y: pt.y }));
+}
+
+export function addRoof(
+  p: Project,
+  levelId: string,
+  roofTypeId: string,
+  boundary: Polygon,
+  options: { overhang?: number; rise?: number } = {},
+): { project: Project; roof: Roof } {
+  requireLevel(p, levelId);
+  if (!roofTypeById(p, roofTypeId)) throw new Error("Unknown roof type.");
+  const roof: Roof = {
+    id: newId("roof"),
+    levelId,
+    roofTypeId,
+    boundary: checkedRoofBoundary(boundary),
+    overhang: options.overhang ?? 600,
+    rise: options.rise ?? 2000,
+  };
+  return { project: commit({ ...p, roofs: [...p.roofs, roof] }), roof };
+}
+
+export type RoofPatch = Partial<Pick<Roof, "levelId" | "roofTypeId" | "boundary" | "overhang" | "rise">>;
+
+export function updateRoof(p: Project, roofId: string, patch: RoofPatch): Project {
+  const existing = roofById(p, roofId);
+  if (!existing) throw new Error("Unknown roof.");
+  const updated: Roof = {
+    ...existing,
+    ...patch,
+    boundary: patch.boundary ? checkedRoofBoundary(patch.boundary) : existing.boundary,
+  };
+  return commit({ ...p, roofs: p.roofs.map((r) => (r.id === roofId ? updated : r)) });
+}
+
+export function deleteRoof(p: Project, roofId: string): Project {
+  if (!roofById(p, roofId)) throw new Error("Unknown roof.");
+  return commit({ ...p, roofs: p.roofs.filter((r) => r.id !== roofId) });
 }
 
 // ---------------------------------------------------------------------------

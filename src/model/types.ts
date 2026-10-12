@@ -11,7 +11,7 @@ export interface Point {
  */
 export type Polygon = Point[];
 
-export const SCHEMA_VERSION = 3 as const;
+export const SCHEMA_VERSION = 4 as const;
 
 export interface ProjectUnits {
   length: "mm";
@@ -126,6 +126,54 @@ export interface Column {
   height: number;
 }
 
+/** Type parameters shared by ceilings of the same type. */
+export interface CeilingType {
+  id: string;
+  name: string;
+  /** Panel thickness in millimetres (positive). */
+  thickness: number;
+  materialId: string;
+}
+
+/**
+ * A ceiling: a horizontal panel whose top face sits `height` millimetres above its level.
+ * Shown in plan and 3D; a reflected ceiling plan is a later view milestone.
+ */
+export interface Ceiling {
+  id: string;
+  levelId: string;
+  ceilingTypeId: string;
+  boundary: Polygon;
+  /** Height of the panel's top face above the level elevation, in millimetres (positive). */
+  height: number;
+}
+
+/** Type parameters shared by roofs of the same type. */
+export interface RoofType {
+  id: string;
+  name: string;
+  /** Slab thickness at the eaves, in millimetres (positive). */
+  thickness: number;
+  materialId: string;
+}
+
+/**
+ * A simple hip roof over an axis-aligned rectangular footprint. The footprint is the stored
+ * boundary; `overhang` expands it outward before the hip geometry is generated. `rise` is the
+ * height of the ridge above the level (DECISIONS.md D10).
+ */
+export interface Roof {
+  id: string;
+  levelId: string;
+  roofTypeId: string;
+  /** Axis-aligned rectangle, 4 vertices. */
+  boundary: Polygon;
+  /** Horizontal overhang beyond the boundary, in millimetres (0 or positive). */
+  overhang: number;
+  /** Ridge height above the level elevation, in millimetres (positive). */
+  rise: number;
+}
+
 export interface Project {
   schemaVersion: typeof SCHEMA_VERSION;
   id: string;
@@ -138,10 +186,14 @@ export interface Project {
   wallTypes: WallType[];
   floorTypes: FloorType[];
   columnTypes: ColumnType[];
+  ceilingTypes: CeilingType[];
+  roofTypes: RoofType[];
   openingTypes: OpeningType[];
   walls: Wall[];
   openings: Opening[];
   floors: Floor[];
   rooms: Room[];
   columns: Column[];
+  ceilings: Ceiling[];
+  roofs: Roof[];
 }

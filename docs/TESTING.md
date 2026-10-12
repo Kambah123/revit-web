@@ -32,7 +32,9 @@ Environment knobs for `e2e/*.e2e.mjs`: `APP_URL`, `CHROME_PATH`, `CHROME_ARGS`, 
 | Schema | `src/__tests__/schema.test.ts` | deterministic serialization, parse errors, v1→v2 migration. |
 | Autosave | `src/__tests__/autosave.test.ts` | write/read/clear, corrupt-slot handling. |
 | Polygons & quantities | `src/__tests__/polygon.test.ts`, `quantities.test.ts` | shoelace areas, self-intersection rejection, derived quantities. |
-| Schema v3 | `src/__tests__/schema.test.ts` (extended) | v2→v3 migration, new entity round-trip. |
+| Element commands | `src/__tests__/elements.test.ts` | materials, floor/column/ceiling/roof types and instances, cascades, invalid-edit rejection. |
+| Element geometry | `src/__tests__/elementGeometry.test.ts` | slab elevations, hip-roof ridge derivation, visible-level rules, rectangle rules. |
+| Schema migrations | `src/__tests__/schema.test.ts` | deterministic round-trip, v1→v2→v4 and v3→v4 migrations, malformed-file rejection. |
 
 ## Integration tests
 

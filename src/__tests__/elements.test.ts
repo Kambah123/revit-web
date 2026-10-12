@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  addCeiling,
+  addCeilingType,
   addColumn,
   addColumnType,
   addFloor,
@@ -8,16 +10,26 @@ import {
   addOpening,
   addRoom,
   addWall,
+  addRoof,
+  addRoofType,
+  deleteCeiling,
+  deleteCeilingType,
   deleteColumn,
   deleteColumnType,
   deleteFloor,
   deleteFloorType,
   deleteLevel,
   deleteMaterial,
+  deleteRoof,
+  deleteRoofType,
   deleteRoom,
+  updateCeiling,
+  updateCeilingType,
   updateColumn,
   updateFloor,
   updateMaterial,
+  updateRoof,
+  updateRoofType,
   updateRoom,
 } from "../model/commands";
 import { freshProject, ids } from "./helpers";
@@ -179,5 +191,108 @@ describe("cascades", () => {
     expect(after.columns).toHaveLength(0);
     // Level 2 survives.
     expect(after.levels.map((l) => l.id)).toEqual([i.level2]);
+  });
+});
+
+describe("ceilings", () => {
+  it("adds, edits and deletes ceilings", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    const { project: p1, ceiling } = addCeiling(p0, i.level1, p0.ceilingTypes[0].id, square, { height: 2700 });
+    expect(p1.ceilings).toHaveLength(1);
+    expect(p1.ceilings[0].height).toBe(2700);
+    const p2 = updateCeiling(p1, ceiling.id, { height: 2400 });
+    expect(p2.ceilings[0].height).toBe(2400);
+    const p3 = updateCeiling(p2, ceiling.id, { ceilingTypeId: p2.ceilingTypes[0].id });
+    expect(p3.ceilings).toHaveLength(1);
+    expect(deleteCeiling(p3, ceiling.id).ceilings).toHaveLength(0);
+    expect(() => deleteCeiling(p0, "nope")).toThrow(/Unknown ceiling/);
+    expect(() => addCeiling(p0, i.level1, "nope", square)).toThrow(/Unknown ceiling type/);
+    expect(() => addCeiling(p0, i.level1, p0.ceilingTypes[0].id, square.slice(0, 2))).toThrow(/at least three/);
+    expect(() => updateCeiling(p0, "nope", { height: 100 })).toThrow(/Unknown ceiling/);
+  });
+
+  it("adds ceiling types and refuses to delete types in use", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    const { project: p1, ceilingType } = addCeilingType(p0, "Gypsum - 20 mm", 20);
+    const p2 = addCeiling(p1, i.level1, ceilingType.id, square).project;
+    expect(() => deleteCeilingType(p2, ceilingType.id)).toThrow(/used by a ceiling/);
+    expect(deleteCeilingType(p1, ceilingType.id).ceilingTypes).toHaveLength(p0.ceilingTypes.length);
+    expect(() => addCeilingType(p0, "Bad", 0)).toThrow(/positive/);
+    expect(() => updateCeilingType(p0, "nope", { name: "X" })).toThrow(/Unknown ceiling type/);
+    expect(() => deleteCeilingType(p0, "nope")).toThrow(/Unknown ceiling type/);
+  });
+});
+
+describe("roofs", () => {
+  const rect = [
+    { x: 0, y: 0 },
+    { x: 8000, y: 0 },
+    { x: 8000, y: 5000 },
+    { x: 0, y: 5000 },
+  ];
+
+  it("adds a hip roof with overhang and rise and edits them", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    const { project: p1, roof } = addRoof(p0, i.level1, p0.roofTypes[0].id, rect, { overhang: 600, rise: 2000 });
+    expect(p1.roofs).toHaveLength(1);
+    expect(p1.roofs[0].overhang).toBe(600);
+    const p2 = updateRoof(p1, roof.id, { overhang: 900, rise: 2500 });
+    expect(p2.roofs[0].overhang).toBe(900);
+    expect(p2.roofs[0].rise).toBe(2500);
+    expect(deleteRoof(p2, roof.id).roofs).toHaveLength(0);
+    expect(() => deleteRoof(p0, "nope")).toThrow(/Unknown roof/);
+    expect(() => updateRoof(p0, "nope", { rise: 100 })).toThrow(/Unknown roof/);
+    expect(() => addRoof(p0, i.level1, "nope", rect)).toThrow(/Unknown roof type/);
+  });
+
+  it("refuses non-rectangular footprints and bad values", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    expect(() =>
+      addRoof(p0, i.level1, p0.roofTypes[0].id, [
+        { x: 0, y: 0 },
+        { x: 5000, y: 0 },
+        { x: 5000, y: 4000 },
+        { x: 2500, y: 6000 },
+        { x: 0, y: 4000 },
+      ]),
+    ).toThrow(/rectangle with four points/);
+    expect(() =>
+      addRoof(p0, i.level1, p0.roofTypes[0].id, [
+        { x: 0, y: 0 },
+        { x: 5000, y: 1000 },
+        { x: 4000, y: 5000 },
+        { x: 500, y: 3000 },
+      ]),
+    ).toThrow(/axis-aligned rectangle/);
+    expect(() => addRoof(p0, i.level1, p0.roofTypes[0].id, rect, { overhang: -1 })).toThrow(/overhang/);
+    expect(() => addRoof(p0, i.level1, p0.roofTypes[0].id, rect, { rise: 0 })).toThrow(/positive whole-millimetre rise/);
+  });
+
+  it("adds roof types and refuses to delete types in use", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    const { project: p1, roofType } = addRoofType(p0, "Tile - 250 mm", 250);
+    const p2 = addRoof(p1, i.level1, roofType.id, rect).project;
+    expect(() => deleteRoofType(p2, roofType.id)).toThrow(/used by a roof/);
+    expect(deleteRoofType(p1, roofType.id).roofTypes).toHaveLength(p0.roofTypes.length);
+    expect(() => addRoofType(p0, "Bad", -1)).toThrow(/positive/);
+    expect(() => updateRoofType(p0, "nope", { name: "X" })).toThrow(/Unknown roof type/);
+    expect(() => deleteRoofType(p0, "nope")).toThrow(/Unknown roof type/);
+  });
+
+  it("level delete cascades to ceilings and roofs", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    let p = addCeiling(p0, i.level1, p0.ceilingTypes[0].id, square).project;
+    p = addRoof(p, i.level1, p0.roofTypes[0].id, rect).project;
+    p = addCeiling(p, i.level2, p0.ceilingTypes[0].id, square).project;
+    const after = deleteLevel(p, i.level1);
+    expect(after.ceilings).toHaveLength(1);
+    expect(after.ceilings[0].levelId).toBe(i.level2);
+    expect(after.roofs).toHaveLength(0);
   });
 });

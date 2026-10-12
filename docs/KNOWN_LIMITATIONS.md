@@ -15,7 +15,10 @@ Kept current every slice. Newest items last within each section. (Session 2026-1
 - Wall height is a single value; no base/top offsets; no layered (compound) wall assemblies.
 - Floor/room boundaries are explicit user-drawn polylines; rooms are not auto-bounded by walls yet; no shaft/openings in floors yet; no sloped floors.
 - Columns are rectangular only; no rotation parameter yet; no round/steel sections.
-- Roofs, ceilings, stairs, railings, ramps, curtain walls, grids, reference planes: not yet implemented.
+- Ceilings are horizontal panels (top at a height above their level); no reflected ceiling plan view yet, and ceilings render translucently in plan.
+- Roofs are hip roofs over axis-aligned rectangular footprints only (overhang + rise); no gable ends, no free-form or curved roofs, no slope-as-angle; flat soffit, no fascia; walls do not auto-join to the roof underside.
+- Floor, room, ceiling and roof boundaries cannot be re-edited after creation (delete + redraw).
+- Stairs, railings, ramps, curtain walls, grids, reference planes: not yet implemented.
 - Room area is polygon shoelace area (not net-of-walls).
 
 ## Views

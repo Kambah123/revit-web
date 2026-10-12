@@ -63,8 +63,8 @@ describe("schema", () => {
       ],
     };
     const p = parseProject(JSON.stringify(v1));
-    // The v1 file is migrated through v2 to the current schema (v3).
-    expect(p.schemaVersion).toBe(3);
+    // The v1 file is migrated through v2 and v3 to the current schema (v4).
+    expect(p.schemaVersion).toBe(4);
     expect(p.name).toBe("Old");
     expect(p.levels.map((l) => l.elevation)).toEqual([0, 3200]);
     expect(p.walls[0].end).toEqual({ x: 4100, y: 0 });
@@ -77,7 +77,7 @@ describe("schema", () => {
     expect(parseProject(serializeProject(p))).toEqual(p);
   });
 
-  it("migrates schema v2 to v3 with a default material assigned to wall types", () => {
+  it("migrates schema v2 through v3 to v4 with default materials and types", () => {
     const v2 = {
       format: "revit-web/project",
       schemaVersion: 2,
@@ -96,16 +96,68 @@ describe("schema", () => {
       openings: [{ id: "op1", hostWallId: "w1", openingTypeId: "ot-a", offset: 2000 }],
     };
     const p = parseProject(JSON.stringify(v2));
-    expect(p.schemaVersion).toBe(3);
+    expect(p.schemaVersion).toBe(4);
     expect(p.revision).toBe(7);
     expect(p.wallTypes[0].thickness).toBe(200);
     expect(p.materials).toHaveLength(1);
     expect(p.wallTypes[0].materialId).toBe(p.materials[0].id);
     expect(p.floorTypes.length).toBeGreaterThan(0);
     expect(p.columnTypes.length).toBeGreaterThan(0);
+    expect(p.ceilingTypes.length).toBeGreaterThan(0);
+    expect(p.roofTypes.length).toBeGreaterThan(0);
     expect(p.floors).toEqual([]);
     expect(p.rooms).toEqual([]);
     expect(p.columns).toEqual([]);
+    expect(p.ceilings).toEqual([]);
+    expect(p.roofs).toEqual([]);
+    expect(parseProject(serializeProject(p))).toEqual(p);
+  });
+
+  it("migrates schema v3 to v4 with seeded ceiling and roof types", () => {
+    const v3 = {
+      format: "revit-web/project",
+      schemaVersion: 3,
+      id: "proj-v3",
+      name: "V3 project",
+      units: { length: "mm" },
+      revision: 2,
+      levels: [{ id: "lvl-a", name: "Ground", elevation: 0 }],
+      materials: [
+        { id: "mat-a", name: "Generic", color: "#b0a89a" },
+        { id: "mat-b", name: "Concrete", color: "#9a9a94" },
+      ],
+      wallTypes: [{ id: "wt-a", name: "Generic - 200 mm", thickness: 200, materialId: "mat-a" }],
+      floorTypes: [{ id: "ft-a", name: "Floor - 200 mm", thickness: 200, materialId: "mat-b" }],
+      columnTypes: [{ id: "ct-a", name: "Column - 300 x 300", width: 300, depth: 300, materialId: "mat-b" }],
+      openingTypes: [],
+      walls: [],
+      openings: [],
+      floors: [
+        {
+          id: "fl-1",
+          levelId: "lvl-a",
+          floorTypeId: "ft-a",
+          boundary: [
+            { x: 0, y: 0 },
+            { x: 4000, y: 0 },
+            { x: 4000, y: 3000 },
+            { x: 0, y: 3000 },
+          ],
+        },
+      ],
+      rooms: [],
+      columns: [],
+    };
+    const p = parseProject(JSON.stringify(v3));
+    expect(p.schemaVersion).toBe(4);
+    expect(p.ceilings).toEqual([]);
+    expect(p.roofs).toEqual([]);
+    expect(p.ceilingTypes.length).toBeGreaterThan(0);
+    expect(p.roofTypes.length).toBeGreaterThan(0);
+    // Seeded types reference a material that exists in the file.
+    expect(["mat-a", "mat-b"]).toContain(p.ceilingTypes[0].materialId);
+    expect(["mat-a", "mat-b"]).toContain(p.roofTypes[0].materialId);
+    expect(p.floors).toHaveLength(1);
     expect(parseProject(serializeProject(p))).toEqual(p);
   });
 
