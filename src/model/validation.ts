@@ -1,5 +1,14 @@
+import { boundaryError } from "../geometry/polygon";
 import { MIN_WALL_LENGTH_MM, distanceMm } from "./geometry";
-import { levelById, openingTypeById, wallById, wallTypeById } from "./project";
+import {
+  columnTypeById,
+  floorTypeById,
+  levelById,
+  materialById,
+  openingTypeById,
+  wallById,
+  wallTypeById,
+} from "./project";
 import type { Project } from "./types";
 
 export type Severity = "error" | "warning";
@@ -12,6 +21,7 @@ export interface Issue {
 }
 
 const isInt = (v: number) => Number.isSafeInteger(v);
+const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 /**
  * Checks every invariant of the canonical model. Errors make a project invalid: commands refuse to
@@ -24,15 +34,21 @@ export function validateProject(p: Project): Issue[] {
   const warning = (code: string, message: string, entityId?: string) =>
     issues.push({ severity: "warning", code, message, entityId });
 
-  if (p.schemaVersion !== 2) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
+  if (p.schemaVersion !== 3) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
   if (p.units?.length !== "mm") error("units", "Project length unit must be millimetres.");
   if (!isInt(p.revision) || p.revision < 0) error("revision", "Revision must be a non-negative integer.");
 
   checkUniqueIds(p.levels.map((x) => x.id), "level", error);
+  checkUniqueIds(p.materials.map((x) => x.id), "material", error);
   checkUniqueIds(p.wallTypes.map((x) => x.id), "wall type", error);
+  checkUniqueIds(p.floorTypes.map((x) => x.id), "floor type", error);
+  checkUniqueIds(p.columnTypes.map((x) => x.id), "column type", error);
   checkUniqueIds(p.openingTypes.map((x) => x.id), "opening type", error);
   checkUniqueIds(p.walls.map((x) => x.id), "wall", error);
   checkUniqueIds(p.openings.map((x) => x.id), "opening", error);
+  checkUniqueIds(p.floors.map((x) => x.id), "floor", error);
+  checkUniqueIds(p.rooms.map((x) => x.id), "room", error);
+  checkUniqueIds(p.columns.map((x) => x.id), "column", error);
 
   if (p.levels.length === 0) error("no-levels", "A project must keep at least one level.");
   for (const level of p.levels) {
@@ -46,11 +62,39 @@ export function validateProject(p: Project): Issue[] {
     elevations.set(level.elevation, level.name);
   }
 
+  if (p.materials.length === 0) error("no-materials", "A project must keep at least one material.");
+  for (const material of p.materials) {
+    if (material.name.trim() === "") error("material-name", "Material names cannot be empty.", material.id);
+    if (!COLOR_PATTERN.test(material.color)) {
+      error("material-color", `${material.name} needs a colour like "#a1b2c3".`, material.id);
+    }
+  }
+
   for (const type of p.wallTypes) {
     if (type.name.trim() === "") error("wall-type-name", "Wall type names cannot be empty.", type.id);
     if (!isInt(type.thickness) || type.thickness <= 0) {
       error("wall-thickness", `${type.name} needs a positive whole-millimetre thickness.`, type.id);
     }
+    if (!materialById(p, type.materialId)) error("wall-type-material", `${type.name} refers to a missing material.`, type.id);
+  }
+
+  for (const type of p.floorTypes) {
+    if (type.name.trim() === "") error("floor-type-name", "Floor type names cannot be empty.", type.id);
+    if (!isInt(type.thickness) || type.thickness <= 0) {
+      error("floor-thickness", `${type.name} needs a positive whole-millimetre thickness.`, type.id);
+    }
+    if (!materialById(p, type.materialId)) error("floor-type-material", `${type.name} refers to a missing material.`, type.id);
+  }
+
+  for (const type of p.columnTypes) {
+    if (type.name.trim() === "") error("column-type-name", "Column type names cannot be empty.", type.id);
+    if (!isInt(type.width) || type.width <= 0) {
+      error("column-width", `${type.name} needs a positive whole-millimetre width.`, type.id);
+    }
+    if (!isInt(type.depth) || type.depth <= 0) {
+      error("column-depth", `${type.name} needs a positive whole-millimetre depth.`, type.id);
+    }
+    if (!materialById(p, type.materialId)) error("column-type-material", `${type.name} refers to a missing material.`, type.id);
   }
 
   for (const type of p.openingTypes) {
@@ -122,6 +166,34 @@ export function validateProject(p: Project): Issue[] {
           error("opening-overlap", "Doors and windows in the same wall cannot overlap.", hostId);
         }
       }
+    }
+  }
+
+  for (const floor of p.floors) {
+    const label = `Floor ${floor.id}`;
+    if (!levelById(p, floor.levelId)) error("floor-level", `${label} refers to a missing level.`, floor.id);
+    if (!floorTypeById(p, floor.floorTypeId)) error("floor-type", `${label} refers to a missing floor type.`, floor.id);
+    const boundaryMessage = boundaryError(floor.boundary);
+    if (boundaryMessage) error("floor-boundary", `${label}: ${boundaryMessage}`, floor.id);
+  }
+
+  for (const room of p.rooms) {
+    const label = room.name.trim() === "" ? `Room ${room.id}` : `Room "${room.name}"`;
+    if (!levelById(p, room.levelId)) error("room-level", `${label} refers to a missing level.`, room.id);
+    if (room.name.trim() === "") error("room-name", "Room names cannot be empty.", room.id);
+    const boundaryMessage = boundaryError(room.boundary);
+    if (boundaryMessage) error("room-boundary", `${label}: ${boundaryMessage}`, room.id);
+  }
+
+  for (const column of p.columns) {
+    const label = `Column ${column.id}`;
+    if (!levelById(p, column.levelId)) error("column-level", `${label} refers to a missing level.`, column.id);
+    if (!columnTypeById(p, column.columnTypeId)) error("column-type", `${label} refers to a missing column type.`, column.id);
+    if (!isInt(column.position.x) || !isInt(column.position.y)) {
+      error("column-position", `${label} needs a whole-millimetre position.`, column.id);
+    }
+    if (!isInt(column.height) || column.height <= 0) {
+      error("column-height", `${label} needs a positive whole-millimetre height.`, column.id);
     }
   }
 
