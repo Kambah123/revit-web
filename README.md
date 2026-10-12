@@ -44,6 +44,16 @@ Configuration: `DEEPSEEK_API_KEY` (required), `DEEPSEEK_MODEL` (default `deepsee
 `AI_TIMEOUT_MS`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
 `docs/AI_ARCHITECT.md`. Manual live-API test (spends tokens): `DEEPSEEK_API_KEY=sk-... npm run test:ai-manual`.
 
+#### Deploying on Vercel
+
+Vercel uses the serverless handlers in `api/ai/plan.mjs` and `api/ai/health.mjs`; it does not run
+the standalone `npm start` server for a static Vite deployment. In **Vercel → Project → Settings →
+Environment Variables**, set `DEEPSEEK_API_KEY` to your actual DeepSeek API key for **Preview** and
+**Production** (and Development if needed). Do not prefix it with `VITE_`, and never commit it.
+Redeploy after changing the variable. Check `/api/ai/health`: `aiConfigured: true` means the key
+is available to that deployment; `false` means the serverless route is running but DeepSeek is not
+configured. Local `npm run dev` still needs `npm run server` running separately.
+
 ## What works (slice 1)
 
 - Levels with millimetre elevations: add, rename, change elevation, delete (cascades to walls and openings).
