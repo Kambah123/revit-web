@@ -9,6 +9,7 @@ export type CommandGroup =
   | "file"
   | "edit"
   | "tools"
+  | "ai"
   | "datum"
   | "build"
   | "circulation"
@@ -75,6 +76,7 @@ export const RIBBON_TABS: RibbonTab[] = [
     title: "Architecture",
     groups: [
       { id: "tools", title: "Tools", commands: ["tool.select"] },
+      { id: "ai", title: "AI Architect", commands: ["ai.architect"] },
       { id: "datum", title: "Datum", commands: ["level.add"] },
       {
         id: "build",

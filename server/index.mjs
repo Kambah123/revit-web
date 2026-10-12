@@ -160,6 +160,12 @@ function serveStatic(req, res, pathname) {
     return sendError(res, 404, "not_found", "No production build found. Run `npm run build`, or use the Vite dev server.");
   }
   const rel = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, "");
+  // Never serve or fall back for sensitive segments (.git, .env, dotfiles) or source trees.
+  const segments = rel.split(/[/\\]+/).filter(Boolean);
+  const blocked = segments.some((seg) => seg.startsWith(".")) || ["server", "src", "node_modules", "docs", "e2e", "scripts"].includes(segments[0]);
+  if (blocked) {
+    return sendError(res, 404, "not_found", "Not found.");
+  }
   const filePath = resolve(join(DIST_DIR, rel));
   if (filePath !== DIST_DIR && !filePath.startsWith(DIST_DIR + sep)) {
     return sendError(res, 403, "forbidden", "Forbidden.");

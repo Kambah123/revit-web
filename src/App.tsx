@@ -1,6 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
 import { RIBBON_TABS, type CommandSpec, type RibbonTabId } from "./app/ribbon";
+import { applyPlan, type ApplyResult, type ViewRequest } from "./ai/applyPlan";
+import type { DesignPlan } from "./ai/planTypes";
 import {
   addCeiling,
   addColumn,
@@ -43,6 +45,7 @@ import { ViewTabs } from "./ui/ViewTabs";
 import { ViewControlBar, type DetailLevel } from "./ui/ViewControlBar";
 import { StatusBar } from "./ui/StatusBar";
 import { Ribbon } from "./ui/Ribbon";
+import { AiArchitectPanel } from "./ui/AiArchitectPanel";
 import { CommandLauncher } from "./ui/CommandLauncher";
 import { ShortcutsDialog } from "./ui/ShortcutsDialog";
 import { BimScene, type Selection, type Tool, type ViewMode, type VisualStyle } from "./viewer/BimScene";
@@ -116,6 +119,7 @@ export function App() {
   const [contextualActive, setContextualActive] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(280);
   const [rightWidth, setRightWidth] = useState(280);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
@@ -610,6 +614,66 @@ export function App() {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // AI Architect: applies validated DesignPlans through the command layer
+  // ---------------------------------------------------------------------------
+
+  function tabForView(view: ViewRequest): ViewTab {
+    if (view.view === "3d") return THREED_TAB;
+    if (view.view === "elevation") return elevationTab(view.direction);
+    const level = levelById(project, view.levelId);
+    return { id: planTabId(view.levelId), kind: "plan", levelId: view.levelId, title: level?.name ?? "Plan" };
+  }
+
+  function openViewsFromAi(views: ViewRequest[]) {
+    for (const view of views) {
+      const tab = tabForView(view);
+      setOpenViews((tabs) => (tabs.some((t) => t.id === tab.id) ? tabs : [...tabs, tab]));
+    }
+    const first = views[0];
+    if (!first) return;
+    const tab = tabForView(first);
+    if (tab.kind === "plan" && tab.levelId) {
+      setElevation(null);
+      setView("plan");
+      setActiveLevelId(tab.levelId);
+    } else if (tab.kind === "elevation" && tab.direction) {
+      setElevation(tab.direction);
+    } else {
+      setElevation(null);
+      setView("3d");
+    }
+    setPendingStart(null);
+    setPendingPoints([]);
+  }
+
+  /**
+   * Runs an AI plan through the transactional executor. On success the whole plan becomes ONE
+   * history entry (undo/redo reverts it as a unit); views regenerate through the normal effects and
+   * autosave picks the change up like any manual edit.
+   */
+  function applyAiPlan(plan: DesignPlan): ApplyResult {
+    const result = applyPlan(project, plan);
+    if (!result.ok) {
+      say(result.error ?? "The AI plan could not be applied.", "error");
+      return result;
+    }
+    if (result.changed) {
+      dispatchHist({ type: "commit", label: `AI: ${plan.summary.slice(0, 80)}`, project: result.project });
+      const applied = result.outcomes.filter((o) => o.status === "ok" && o.op !== "view.open").length;
+      say(`AI applied ${applied} change${applied === 1 ? "" : "s"}. Undo (Ctrl+Z) reverts the whole plan.`);
+    }
+    openViewsFromAi(result.views);
+    const created = result.outcomes.find((o) => o.createdId && !o.op.startsWith("view.") && !o.op.endsWith("Type.add") && o.op !== "level.add");
+    if (created?.createdId) {
+      const kind = created.op.split(".")[0];
+      if (kind === "wall" || kind === "opening" || kind === "floor" || kind === "room" || kind === "column" || kind === "ceiling" || kind === "roof") {
+        setSelection({ kind, id: created.createdId });
+      }
+    }
+    return result;
+  }
+
   const kindLabel =
     selection === null
       ? ""
@@ -628,6 +692,16 @@ export function App() {
     { id: "edit.delete", title: "Delete", description: "Delete the selected element.", tab: null, group: "edit", shortcut: "Delete", implemented: true, run: deleteSelection, enabled: () => selection !== null },
     { id: "search.launcher", title: "Search commands", description: "Open the searchable command launcher.", tab: null, group: "help", shortcut: "Ctrl+K", implemented: true, run: () => setLauncherOpen(true) },
     { id: "help.shortcuts", title: "Keyboard shortcuts", description: "Show the shortcut map.", tab: null, group: "help", shortcut: "F1", implemented: true, run: () => setShortcutsOpen(true) },
+    {
+      id: "ai.architect",
+      title: "AI Architect",
+      description: "Describe buildings and edits in plain English (metres, millimetres or feet). DeepSeek proposes validated, previewed, undoable changes to the real BIM model.",
+      tab: "architecture",
+      group: "ai",
+      implemented: true,
+      run: () => setAiOpen((v) => !v),
+      isActive: () => aiOpen,
+    },
     ...toolCommands(),
     {
       id: "level.add",
@@ -920,6 +994,24 @@ export function App() {
             onShadows={setShadows}
           />
         </main>
+
+        {aiOpen ? (
+          <AiArchitectPanel
+            project={project}
+            selection={selection}
+            activeView={{
+              kind: elevation ? "elevation" : view === "3d" ? "3d" : "plan",
+              levelName: activeLevel?.name,
+              direction: elevation ?? undefined,
+            }}
+            onApply={applyAiPlan}
+            onClose={() => setAiOpen(false)}
+          />
+        ) : (
+          <button className="expand-btn ai-expand" title="Open the AI Architect" onClick={() => setAiOpen(true)}>
+            ✦ AI
+          </button>
+        )}
 
         {!rightCollapsed ? (
           <aside className="panel right" style={{ width: rightWidth }}>
