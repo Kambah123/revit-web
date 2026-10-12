@@ -49,6 +49,8 @@ export function loadConfig(env = process.env) {
     temperature: floatFrom(env, "AI_TEMPERATURE", DEFAULTS.temperature, 0, 2),
     /** Serve deterministic demo plans when no API key is configured (clearly labelled). */
     demoPlanner: env.AI_DEMO_PLANNER === "1" || env.AI_DEMO_PLANNER === "true",
+    /** Server-sent-events streaming for /api/ai/plan-stream. `AI_STREAM=0` makes clients use the buffered route. */
+    stream: env.AI_STREAM !== "0",
     port: intFrom(env, "PORT", DEFAULTS.port, 1, 65_535),
     serveStatic: env.SERVE_STATIC !== "0",
     maxBodyBytes: intFrom(env, "AI_MAX_BODY_BYTES", DEFAULTS.maxBodyBytes, 1_024, 4 * 1024 * 1024),

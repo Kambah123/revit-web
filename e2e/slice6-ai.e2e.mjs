@@ -35,6 +35,8 @@ const steps = [];
 /** Every /api/ai/plan body the panel sent, and the repair payloads among them. */
 const sentRequests = [];
 const repairAttempts = [];
+/** Requests the panel made to the streaming endpoint (it must try streaming first). */
+const streamAttempts = [];
 const step = (name) => {
   steps.push(name);
   console.log(`✓ ${name}`);
@@ -179,6 +181,18 @@ try {
         body: JSON.stringify({ ok: true, aiConfigured: true, model: "deepseek-flash", demo: false }),
       });
     }
+    // The client prefers the streaming endpoint. This harness cannot deliver a chunked body, so it
+    // answers with an empty event stream — one of the documented "nothing arrived" signals. The
+    // client must then fall back to the buffered route below without showing the user an error.
+    if (url.endsWith("/api/ai/plan-stream") && req.method() === "POST") {
+      streamAttempts.push(JSON.parse(req.postData() ?? "{}"));
+      return req.respond({
+        status: 200,
+        contentType: "text/event-stream",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: "",
+      });
+    }
     if (url.endsWith("/api/ai/plan") && req.method() === "POST") {
       const body = JSON.parse(req.postData() ?? "{}");
       const message = String(body.message ?? "");
@@ -267,7 +281,14 @@ try {
   assert.ok(opList.includes("Add wall"), "preview lists the operations");
   assert.ok(opList.includes("hip roof"), "preview lists the roof operation");
   await page.screenshot({ path: `${SHOTS}/slice6-ai-preview.png` });
-  step("plan preview shows validated operations before applying");
+  assert.ok(streamAttempts.length >= 1, "the client tries the streaming endpoint first");
+  assert.ok(sentRequests.length >= 1, "and falls back to the buffered endpoint when streaming is unavailable");
+  assert.equal(
+    await page.$eval(".ai-panel", (el) => (el.textContent ?? "").includes("streaming is disabled")),
+    false,
+    "falling back to the buffered route is not shown to the user as an error",
+  );
+  step("plan preview shows validated operations before applying (streaming attempted, buffered fallback used)");
 
   // 3. Apply: genuine canonical entities appear (walls, hosted openings, room, floor, hip roof).
   await clickLastApply();

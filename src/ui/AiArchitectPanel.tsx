@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { requestAiPlan, type ChatTurn, type RepairPayload } from "../ai/apiClient";
+import { requestAiPlanStream, type ChatTurn, type RepairPayload } from "../ai/apiClient";
 import { applyPlan, type ApplyResult } from "../ai/applyPlan";
 import { buildProjectContext, describeSelection } from "../ai/context";
+import { createPartialPlanReader, safeOperationLabel } from "../ai/partialPlan";
 import { describeOperation, isQuickApply } from "../ai/planSchema";
 import { EMPTY_USAGE, buildRepairPayload, mergeUsage, requestPlanWithAutoRepair, type UsageTotals } from "../ai/repair";
 import type { DesignPlan } from "../ai/planTypes";
@@ -90,6 +91,9 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
   const [status, setStatus] = useState("Ready");
   const [demoMode, setDemoMode] = useState(false);
   const [sessionUsage, setSessionUsage] = useState<UsageTotals>(EMPTY_USAGE);
+  /** Live view of the plan being written (streaming transport only). */
+  const [streamPreview, setStreamPreview] = useState<{ summary?: string; labels: string[]; chars: number; repairing: boolean } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<ChatTurn[]>([]);
 
@@ -138,8 +142,11 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
   async function dispatch(message: string, options: { echoUser: boolean; repair?: RepairPayload | null; note?: string }) {
     const text = message.trim();
     if (text === "" || busy) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setBusy(true);
     setStatus(options.repair ? "Repairing…" : "Thinking…");
+    setStreamPreview(null);
     setInput("");
 
     const history = historyRef.current.slice(-12);
@@ -166,12 +173,37 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
         selection: selection ? (describeSelection(project, selection) as unknown as Record<string, unknown> | null) : null,
       },
       {
-        request: (body) => requestAiPlan(body),
+        // Streaming transport with an automatic fall back to the buffered endpoint; the repair loop
+        // never learns which transport was used.
+        request: (body) => {
+          const reader = createPartialPlanReader();
+          let lastPaint = 0;
+          let lastCount = 0;
+          return requestAiPlanStream(body, {
+            signal: controller.signal,
+            onDelta: (chunk) => {
+              const preview = reader.push(chunk);
+              const now = Date.now();
+              // Repaint when an operation completes, at most every 200 ms while text flows.
+              if (preview.operations.length === lastCount && now - lastPaint < 200) return;
+              lastPaint = now;
+              lastCount = preview.operations.length;
+              setStreamPreview({
+                summary: preview.summary,
+                labels: preview.operations.slice(-6).map((op) => safeOperationLabel(op, describeOperation)),
+                chars: preview.chars,
+                repairing: Boolean(body.repair),
+              });
+            },
+          });
+        },
         // Dry run only: the plan is never committed here, the user applies it explicitly.
         preview: (plan) => applyPlan(project, plan),
         onStatus: (statusText) => setEntries((e) => [...e, { kind: "progress", text: statusText }]),
       },
     );
+    abortRef.current = null;
+    setStreamPreview(null);
 
     // Every request the outcome needed (including automatic repairs) is accounted for here.
     setSessionUsage((totals) => mergeUsage(totals, outcome.usage));
@@ -182,13 +214,16 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
     if (outcome.status === "error") {
       setEntries((e) => [
         ...e,
-        {
-          kind: "error",
-          text: outcome.message,
-          code: outcome.code,
-          repairPayload: outcome.repairPayload,
-          sourceMessage: text,
-        },
+        // Cancelling is a user action, not a failure: no error card, nothing was applied.
+        outcome.code === "ai_cancelled"
+          ? { kind: "status" as const, text: "Cancelled — the request was stopped and nothing was applied." }
+          : {
+              kind: "error" as const,
+              text: outcome.message,
+              code: outcome.code,
+              repairPayload: outcome.repairPayload,
+              sourceMessage: text,
+            },
       ]);
       historyRef.current = [...historyRef.current, { role: "user" as const, content: text }].slice(-30);
       return;
@@ -276,6 +311,11 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
   }
 
   const send = (text: string) => dispatch(text, { echoUser: true });
+
+  /** Stops the in-flight request: the stream is aborted upstream, so tokens stop being spent. */
+  function cancelRequest() {
+    abortRef.current?.abort();
+  }
 
   /**
    * Retry after a failure. When validator feedback exists it is sent back (a genuine repair), so the
@@ -510,6 +550,34 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
             )}
           </div>
         ))}
+        {streamPreview ? (
+          <div className="ai-entry">
+            <div className="ai-stream" aria-live="polite">
+              <div className="ai-stream-head">
+                <span className="ai-spinner" aria-hidden="true" />
+                <strong>{streamPreview.repairing ? "Fixing the reported problems…" : "Writing the plan…"}</strong>
+                <span className="ai-plan-meta">{streamPreview.chars.toLocaleString("en-US")} chars</span>
+              </div>
+              {streamPreview.summary ? <div className="ai-stream-summary">{streamPreview.summary}</div> : null}
+              <div className="ai-note">
+                {streamPreview.labels.length === 0
+                  ? "Waiting for the first operation…"
+                  : `${streamPreview.labels.length} operation${streamPreview.labels.length === 1 ? "" : "s"} so far`}
+              </div>
+              <ol className="ai-ops">
+                {streamPreview.labels.map((label, i) => (
+                  <li key={i}>{label}</li>
+                ))}
+              </ol>
+              <div className="ai-plan-actions">
+                <button className="ai-cancel" onClick={cancelRequest} title="Stop the request (stops token spend; nothing is applied)">
+                  Cancel
+                </button>
+              </div>
+              <div className="ai-note muted">Preview only — the plan is validated when it is complete.</div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="ai-suggestions">

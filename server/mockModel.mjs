@@ -14,6 +14,9 @@
  *    clamp, whatever the plan was.
  *  - Anything else is delegated to the rule-based demo planner (`demoPlanner.mjs`), so the UI stays
  *    usable while clicking around.
+ *  - It speaks both transports: a buffered json response, and server-sent events (chunked, with a
+ *    small delay) when the caller asks for `stream: true`, so the streaming UI can be demonstrated
+ *    offline too.
  *
  * Run:      node server/mockModel.mjs                      (127.0.0.1:9999 by default)
  * Wire up:  DEEPSEEK_API_KEY=demo DEEPSEEK_BASE_URL=http://127.0.0.1:9999 node server/index.mjs
@@ -25,6 +28,8 @@ import { resolve } from "node:path";
 import { demoPlanFor } from "./demoPlanner.mjs";
 
 const BUILD_REQUEST = /\b(design|build|house|home|studio|office|apartment|cottage|cabin|building|rooms?)\b/i;
+/** Pause between streamed chunks (ms): enough to see progress, fast enough to stay pleasant. */
+const MOCK_STREAM_DELAY_MS = Number(process.env.MOCK_STREAM_DELAY_MS ?? 120);
 
 /** Four walls 9 x 6 m, slab, room, door, two windows — the second window hangs off the wall. */
 export function scriptedBrokenPlan() {
@@ -164,12 +169,37 @@ export function createMockModelServer() {
     }
 
     const usage = { prompt_tokens: 1200, completion_tokens: 400, total_tokens: 1600 };
-    console.log(`${isRepair ? "repair" : "initial"} request → ${plan.operations.length} operations`);
+    const model = body.model ?? "mock-model";
+    const content = JSON.stringify(plan);
+    console.log(`${isRepair ? "repair" : "initial"} request → ${plan.operations.length} operations${body.stream ? " (streamed)" : ""}`);
+
+    if (body.stream) {
+      // Server-sent events, deliberately split mid-value and paced, so the client's buffering and the
+      // streaming UI are exercised exactly as they are against the real API.
+      res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store" });
+      const chunkSize = Math.max(24, Math.ceil(content.length / 8));
+      const pieces = [];
+      for (let i = 0; i < content.length; i += chunkSize) pieces.push(content.slice(i, i + chunkSize));
+      let closed = false;
+      res.on("close", () => {
+        closed = true;
+      });
+      for (const piece of pieces) {
+        if (closed) return;
+        await new Promise((resolve) => setTimeout(resolve, MOCK_STREAM_DELAY_MS));
+        res.write(`data: ${JSON.stringify({ id: "chatcmpl-mock", model, choices: [{ index: 0, delta: { content: piece } }] })}\n\n`);
+      }
+      if (closed) return;
+      res.write(`data: ${JSON.stringify({ id: "chatcmpl-mock", model, choices: [], usage })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      return res.end();
+    }
+
     return respondJson(res, 200, {
       id: `chatcmpl-mock-${Date.now()}`,
       object: "chat.completion",
-      model: body.model ?? "mock-model",
-      choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(plan) }, finish_reason: "stop" }],
+      model,
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
       usage,
     });
   });

@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "../../server/index.mjs";
 import { loadConfig } from "../../server/config.mjs";
 import { createMockModelServer } from "../../server/mockModel.mjs";
-import { requestAiPlan } from "../ai/apiClient";
+import { requestAiPlan, requestAiPlanStream } from "../ai/apiClient";
 import { applyPlan } from "../ai/applyPlan";
 import { requestPlanWithAutoRepair } from "../ai/repair";
 import { freshProject } from "./helpers";
@@ -192,6 +192,48 @@ describe("mock model harness (npm run mock:model)", () => {
         expect(opening.offset + type.width / 2).toBeLessThanOrEqual(length);
       }
       expect(outcome.plan.assumptions.join(" ")).toMatch(/Re-fitted/i);
+    } finally {
+      await close(appServer);
+      await close(mockModel);
+    }
+  });
+});
+
+/**
+ * The offline harness must also exercise the streaming transport, otherwise the demo would stop
+ * showing progress updates without anyone noticing.
+ */
+describe("mock model harness — streaming transport", () => {
+  it("streams the plan in chunks and reassembles it into the same repaired plan", async () => {
+    const mockModel = createMockModelServer();
+    const mockPort = await listen(mockModel);
+    const appServer = createServer({
+      config: { ...loadConfig({ DEEPSEEK_API_KEY: "demo", AI_RATE_LIMIT_PER_MIN: "1000" }), baseUrl: `http://127.0.0.1:${mockPort}` },
+    });
+    const appPort = await listen(appServer);
+    const base = `http://127.0.0.1:${appPort}`;
+
+    try {
+      const deltas = [];
+      const outcome = await requestPlanWithAutoRepair(
+        { message: "Design a studio" },
+        {
+          request: (body) =>
+            requestAiPlanStream(body, {
+              fetchImpl: (url, init) => fetch(new URL(url, base), init),
+              onDelta: (chunk) => deltas.push(chunk),
+            }),
+          preview: (plan) => applyPlan(freshProject(), plan),
+        },
+      );
+
+      expect(outcome.status).toBe("plan");
+      if (outcome.status !== "plan") throw new Error("expected a streamed, repaired plan");
+      expect(outcome.repair?.attempts).toBe(1);
+      // Both turns (initial + repair) streamed, so progress was visible for each.
+      expect(deltas.length).toBeGreaterThan(4);
+      expect(outcome.apply.ok).toBe(true);
+      expect(outcome.apply.project.openings.length).toBeGreaterThan(0);
     } finally {
       await close(appServer);
       await close(mockModel);

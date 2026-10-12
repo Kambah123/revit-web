@@ -2,6 +2,57 @@
 
 Latest state first. Record only executed commands/results; historical sessions follow current status.
 
+## Session 2026-10-12 (fourth) — AI Architect streaming plans
+
+**Branch:** `arena/45e507a7-revit-web` (continues the previous session on the same branch; repair loop already committed as `c0b4141`).
+
+**Goal (user-chosen):** long plans spent 30–60 s behind "thinking…". Plans now stream, with a cancel
+button, without weakening any validation.
+
+**Transport:** new `POST /api/ai/plan-stream` (server-sent events) next to the buffered route, sharing
+`checkedRequestBody`/`buildMessages`/rate limit/error mapping. Frames: `start` → `delta`* →
+`done`/`error`; the `done` payload is the same envelope as the buffered response, so validation and
+the repair loop never branch on transport. `streamDeepSeek` in `server/deepseek.mjs` (JSON mode +
+`stream_options.include_usage`, status mapping shared with the buffered call). Vercel entry
+`api/ai/plan-stream.mjs`; `AI_STREAM=0` switches streaming off (501 → clients fall back).
+
+**Progress UI:** `src/ai/partialPlan.ts` scans the incoming json incrementally and reports only
+complete operations (tolerant: partial frames, braces inside prose, malformed fragments skipped; the
+finished json still goes through the authoritative validator). The panel shows "N operations so far"
+plus the newest labels, throttled to one repaint per 200 ms, with a Cancel button.
+
+**Cancellation:** the panel aborts the fetch; the server sees the disconnect (`res.on("close")`) and
+aborts the upstream DeepSeek request, so cancelling stops token spend rather than just rendering.
+Cancellation is a status line, never an error card, on both transports (`ai_cancelled`).
+
+**Fallback (deployment resilience):** buffered route used automatically when the stream route is
+missing (404/405), streaming is off (501), the response is not an event stream, nothing arrived, or
+the connection failed. The timeout is an inactivity budget, re-armed on every delta, so a slow but
+live stream is not cut off. An empty stream gets one buffered retry server-side; a stream that already
+delivered text is never silently re-requested (no double charging for half a plan).
+
+**Also:** `npm run mock:model` now speaks SSE when the caller streams, so the whole thing is
+demonstrable offline; the harness is covered by tests.
+
+**Verified:** `tsc --noEmit` clean; **188 unit/integration tests pass** (21 files; +24 over the
+previous session's 164: 8 server SSE, 8 client transport, 7 partial-plan, 1 harness streaming test);
+`npm run build` passes. Live check through the Vite proxy against the mock model: `start` + 8 `delta`
+frames (~120 ms apart) + `done`, and the deltas reassemble byte-for-byte into the `done` plan;
+a streamed repair turn reported `repairing: true` and clamped the broken window (offset 9000 → 8350)
+with the fix disclosed in the assumptions.
+
+**Not verified here:** browser e2e — still no Chrome/Chromium in this sandbox. `e2e/slice6-ai.e2e.mjs`
+now asserts that the client tries the stream endpoint first and falls back cleanly (the harness answers
+with an empty event stream, since Puppeteer interception cannot deliver a chunked body). The
+incremental stream card is covered at the protocol level instead, and this limitation is documented in
+`docs/AI_ARCHITECT.md` §11.
+
+**Next ideas (not started):** cost controls (server-side daily token budget, per-project quotas,
+cost-capped escalation to `deepseek-v4-pro` when a plan fails twice); a golden-prompt evaluation
+harness scoring buildability; ghost preview of a proposed plan in the 3D viewport.
+
+---
+
 ## Session 2026-10-12 (third) — AI Architect self-repair loop
 
 **Branch/commit at start:** `arena/45e507a7-revit-web` @ `799bbc5` (clean; AI Architect from the previous session already merged).

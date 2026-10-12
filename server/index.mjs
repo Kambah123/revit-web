@@ -13,7 +13,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import http from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { callDeepSeek, DeepSeekError, parsePlanContent } from "./deepseek.mjs";
+import { callDeepSeek, DeepSeekError, parsePlanContent, streamDeepSeek } from "./deepseek.mjs";
 import { demoPlanFor } from "./demoPlanner.mjs";
 import { buildSystemPrompt, buildUserMessage } from "./prompt.mjs";
 import { createRateLimiter } from "./rateLimit.mjs";
@@ -80,25 +80,47 @@ function readBody(req, maxBytes) {
   });
 }
 
+/** Parses and validates a plan request body. Returns null after answering the request itself. */
+function checkedRequestBody(rawBody, res) {
+  let body;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    sendError(res, 400, "ai_bad_request", "Request body is not valid JSON.");
+    return null;
+  }
+  const checked = validatePlanRequest(body);
+  if (!checked.ok) {
+    sendError(res, 400, "ai_bad_request", checked.message);
+    return null;
+  }
+  return checked.value;
+}
+
+/**
+ * Assembles the DeepSeek chat messages for a validated request: the system prompt, the prior turns,
+ * and the user turn (project context + selection + optional repair block + request).
+ */
+export function buildMessages(request) {
+  return [
+    { role: "system", content: buildSystemPrompt() },
+    ...request.history.map((t) => ({ role: t.role, content: t.content })),
+    { role: "user", content: buildUserMessage(request) },
+  ];
+}
+
 /**
  * Handles one /api/ai/plan call: validate → (DeepSeek | demo planner) → sanity-check → respond.
  * @param {{ config: object, fetchImpl?: typeof fetch }} deps
  */
 export async function handlePlanRequest(deps, rawBody, res) {
   const { config, fetchImpl = fetch } = deps;
-  let body;
-  try {
-    body = JSON.parse(rawBody);
-  } catch {
-    return sendError(res, 400, "ai_bad_request", "Request body is not valid JSON.");
-  }
-
-  const checked = validatePlanRequest(body);
-  if (!checked.ok) return sendError(res, 400, "ai_bad_request", checked.message);
+  const request = checkedRequestBody(rawBody, res);
+  if (request === null) return undefined;
 
   // Demo planner: clearly-labelled deterministic fallback for environments without an API key.
   if (!config.apiKey && config.demoPlanner) {
-    const plan = demoPlanFor(checked.value);
+    const plan = demoPlanFor(request);
     return sendJson(res, 200, { plan, model: "demo-planner", demo: true, usage: null });
   }
   if (!config.apiKey) {
@@ -110,16 +132,12 @@ export async function handlePlanRequest(deps, rawBody, res) {
     );
   }
 
-  const messages = [
-    { role: "system", content: buildSystemPrompt() },
-    ...checked.value.history.map((t) => ({ role: t.role, content: t.content })),
-    { role: "user", content: buildUserMessage(checked.value) },
-  ];
+  const messages = buildMessages(request);
 
   let plan;
   let model = config.model;
   let usage = null;
-  const repairing = Boolean(checked.value.repair);
+  const repairing = Boolean(request.repair);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let result;
     try {
@@ -156,6 +174,124 @@ export async function handlePlanRequest(deps, rawBody, res) {
   }
 
   return sendJson(res, 200, { plan, model, demo: false, usage });
+}
+
+/**
+ * Server-sent-events variant of the plan endpoint: `start` → `delta`* → `done` | `error`.
+ *
+ * The `done` payload is byte-for-byte the same envelope as the buffered route (plan, model, demo,
+ * usage), so the client validates exactly one shape however it received the plan. Streaming is a
+ * transport optimisation, never a second code path for trust: the plan is parsed and sanity-checked
+ * here exactly as it is for a buffered response.
+ *
+ * Client disconnects abort the upstream DeepSeek request, so cancelling stops token spend.
+ *
+ * @param {{ config: object, fetchImpl?: typeof fetch }} deps
+ */
+export async function handlePlanStreamRequest(deps, rawBody, res, req) {
+  const { config, fetchImpl = fetch } = deps;
+  const request = checkedRequestBody(rawBody, res);
+  if (request === null) return undefined;
+
+  // Demo planner (no key, demo enabled): answer as a single done event so clients see one protocol.
+  if (!config.apiKey && config.demoPlanner) {
+    const plan = demoPlanFor(request);
+    res.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-store, no-transform" });
+    res.write(`event: done\ndata: ${JSON.stringify({ plan, model: "demo-planner", demo: true, usage: null })}\n\n`);
+    return res.end();
+  }
+  if (!config.apiKey) {
+    return sendError(
+      res,
+      503,
+      "ai_not_configured",
+      "The AI Architect is not configured on this server. Set DEEPSEEK_API_KEY (see docs/AI_ARCHITECT.md), or enable AI_DEMO_PLANNER=1 for a labelled local demo.",
+    );
+  }
+  if (!config.stream) {
+    // Clients treat this as "streaming unavailable" and use the buffered route instead.
+    return sendError(res, 501, "ai_streaming_disabled", "Streaming is disabled on this server (AI_STREAM=0).");
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store, no-transform",
+    Connection: "keep-alive",
+    // Proxies must not buffer an event stream (nginx honours this).
+    "X-Accel-Buffering": "no",
+  });
+  // A disconnect must stop the upstream request, not just the rendering.
+  const upstream = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) upstream.abort();
+  });
+  const send = (event, payload) => {
+    if (res.writableEnded || res.destroyed) return;
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    } catch {
+      /* the connection is gone; the close handler aborts upstream */
+    }
+  };
+
+  const repairing = Boolean(request.repair);
+  const temperature = repairing ? 0 : undefined;
+  const messages = buildMessages(request);
+  send("start", { model: config.model, repairing });
+
+  let result;
+  try {
+    result = await streamDeepSeek({
+      config,
+      messages,
+      fetchImpl,
+      temperature,
+      signal: upstream.signal,
+      onDelta: (text) => send("delta", { text }),
+    });
+  } catch (error) {
+    const code = error instanceof DeepSeekError ? error.code : "ai_upstream";
+    const message = error instanceof Error ? error.message : "The AI service failed.";
+    // A cancelled or timed-out stream is reported as an error event; the client decides what to do.
+    send("error", { code, message });
+    return res.end();
+  }
+
+  // JSON mode can return empty content intermittently (official docs); retry once, buffered, only
+  // when nothing at all was generated — never re-charge for a half-written plan.
+  let { content, model, usage } = result;
+  if (content.trim() === "") {
+    try {
+      const retry = await callDeepSeek({ config, messages, fetchImpl, temperature });
+      content = retry.content;
+      model = retry.model;
+      usage = retry.usage ?? usage;
+    } catch (error) {
+      const code = error instanceof DeepSeekError ? error.code : "ai_bad_response";
+      send("error", { code, message: error instanceof Error ? error.message : "The AI returned an unusable response." });
+      return res.end();
+    }
+  }
+
+  let plan;
+  try {
+    plan = parsePlanContent(content);
+  } catch (error) {
+    const code = error instanceof DeepSeekError ? error.code : "ai_bad_response";
+    send("error", { code, message: error instanceof Error ? error.message : "The AI returned an unusable response." });
+    return res.end();
+  }
+  if (plan.kind !== undefined && plan.kind !== "design-plan") {
+    send("error", { code: "ai_bad_response", message: "The AI returned json that is not a design plan." });
+    return res.end();
+  }
+  if (!Array.isArray(plan.operations)) {
+    send("error", { code: "ai_bad_response", message: "The AI returned a plan without an operations list." });
+    return res.end();
+  }
+
+  send("done", { plan, model, demo: false, usage });
+  return res.end();
 }
 
 function serveStatic(req, res, pathname) {
@@ -205,9 +341,10 @@ export function createServer({ config, fetchImpl = fetch, now = () => Date.now()
         });
       }
 
-      if (url.pathname === "/api/ai/plan") {
+      const isPlanRoute = url.pathname === "/api/ai/plan" || url.pathname === "/api/ai/plan-stream";
+      if (isPlanRoute) {
         if (req.method !== "POST") {
-          return sendError(res, 405, "method_not_allowed", "Use POST for /api/ai/plan.", { Allow: "POST" });
+          return sendError(res, 405, "method_not_allowed", `Use POST for ${url.pathname}.`, { Allow: "POST" });
         }
         const rate = limiter.check(clientIp(req));
         if (!rate.allowed) {
@@ -225,7 +362,9 @@ export function createServer({ config, fetchImpl = fetch, now = () => Date.now()
           const message = error instanceof Error ? error.message : "Could not read the request body.";
           return sendError(res, error instanceof DeepSeekError ? 413 : 400, "ai_bad_request", message);
         }
-        return handlePlanRequest({ config, fetchImpl }, rawBody, res);
+        return url.pathname === "/api/ai/plan-stream"
+          ? handlePlanStreamRequest({ config, fetchImpl }, rawBody, res, req)
+          : handlePlanRequest({ config, fetchImpl }, rawBody, res);
       }
 
       if (url.pathname.startsWith("/api/")) {
