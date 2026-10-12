@@ -30,9 +30,13 @@ Kept current every slice. Newest items last within each section. (Session 2026-1
 - Autosave holds one slot in local storage; no recovery versions.
 - Project format is revit-web JSON only; DXF/PDF/IFC/BCF/CSV/GLB exporters not yet implemented.
 
-## Workspace (updated with slice 2b when delivered)
+## Workspace
 
-- Before workspace milestone: flat toolbar instead of ribbon; no project browser, view tabs, command launcher, or resizable panels yet (M2 in `ROADMAP.md`).
+- Ribbon exists with 11 tabs; most commands on Structure/Steel/Insert/Annotate/Analyze/Massing/Collaborate/Manage/Add-Ins are visibly disabled with "Not implemented yet" tooltips (they become real as roadmap milestones land).
+- Room name/number, floors etc. have no boundary re-editing after creation (boundary sketch editing arrives with sketch tools in M6); delete + redraw is the current workflow.
+- Unselected columns render in the type's material colour and can be hard to distinguish against a same-coloured floor (grey-on-grey); selection highlight is clear.
+- View scale/detail/visual style/shadows are per-session view state, not stored per saved view (view templates arrive later).
+- Undo history is still in memory only; autosave is one slot.
 
 ## Engineering
 

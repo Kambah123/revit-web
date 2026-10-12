@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
+import { RIBBON_TABS, type CommandSpec, type RibbonTabId } from "./app/ribbon";
 import {
   addColumn,
   addFloor,
@@ -31,7 +32,14 @@ import { clearAutosave, AUTOSAVE_KEY, readAutosave, writeAutosave, type KeyValue
 import { LevelsPanel } from "./ui/LevelsPanel";
 import { RenameField } from "./ui/RenameField";
 import { PropertiesPanel } from "./ui/PropertiesPanel";
-import { BimScene, type Selection, type Tool, type ViewMode } from "./viewer/BimScene";
+import { ProjectBrowser, type ViewTab } from "./ui/ProjectBrowser";
+import { ViewTabs } from "./ui/ViewTabs";
+import { ViewControlBar, type DetailLevel } from "./ui/ViewControlBar";
+import { StatusBar } from "./ui/StatusBar";
+import { Ribbon } from "./ui/Ribbon";
+import { CommandLauncher } from "./ui/CommandLauncher";
+import { ShortcutsDialog } from "./ui/ShortcutsDialog";
+import { BimScene, type Selection, type Tool, type ViewMode, type VisualStyle } from "./viewer/BimScene";
 
 interface Message {
   kind: "info" | "error";
@@ -70,6 +78,9 @@ function loadInitial(): { project: Project; message: Message | null } {
   return { project: createProject(), message: null };
 }
 
+const planTabId = (levelId: string) => `plan:${levelId}`;
+const THREED_TAB: ViewTab = { id: "3d", kind: "3d", title: "3D" };
+
 export function App() {
   const [initial] = useState(loadInitial);
   const [hist, dispatchHist] = useReducer(historyReducer, initial.project, initialHistory);
@@ -84,6 +95,24 @@ export function App() {
   const [cursor, setCursor] = useState<Point | null>(null);
   const [snapStep, setSnapStep] = useState(100);
   const [message, setMessage] = useState<Message | null>(initial.message);
+
+  // Workspace state.
+  const [openViews, setOpenViews] = useState<ViewTab[]>(() => [
+    { id: planTabId(project.levels[0].id), kind: "plan", levelId: project.levels[0].id, title: project.levels[0].name },
+    THREED_TAB,
+  ]);
+  const [ribbonTab, setRibbonTab] = useState<RibbonTabId>("architecture");
+  const [contextualActive, setContextualActive] = useState(false);
+  const [launcherOpen, setLauncherOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [leftWidth, setLeftWidth] = useState(280);
+  const [rightWidth, setRightWidth] = useState(280);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>("shaded");
+  const [shadows, setShadows] = useState(true);
+  const [scale, setScale] = useState(100);
+  const [detail, setDetail] = useState<DetailLevel>("Medium");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BimScene | null>(null);
@@ -152,6 +181,10 @@ export function App() {
   useEffect(() => sceneRef.current?.setTool(tool), [tool]);
   useEffect(() => sceneRef.current?.setView(view), [view]);
   useEffect(() => sceneRef.current?.setSnapStep(snapStep), [snapStep]);
+  useEffect(() => sceneRef.current?.setVisualStyle(visualStyle), [visualStyle]);
+  useEffect(() => sceneRef.current?.setShadows(shadows), [shadows]);
+  useEffect(() => sceneRef.current?.setAnnotationScale(scale), [scale]);
+  useEffect(() => sceneRef.current?.setDetailLevel(detail), [detail]);
   useEffect(() => {
     if (tool === "wall") {
       sceneRef.current?.setPreview(pendingStart, cursor);
@@ -179,12 +212,42 @@ export function App() {
     return () => window.clearTimeout(handle);
   }, [project]);
 
+  // Contextual ribbon follows the selection, like a professional BIM workspace.
+  useEffect(() => {
+    if (selection) setContextualActive(true);
+    else setContextualActive(false);
+  }, [selection]);
+
+  // View tabs: keep the tab list in sync with the level the user is working on.
+  useEffect(() => {
+    if (view !== "plan") return;
+    const id = planTabId(activeId);
+    const level = levelById(project, activeId);
+    setOpenViews((tabs) =>
+      tabs.some((t) => t.id === id)
+        ? tabs.map((t) => (t.id === id ? { ...t, title: level?.name ?? t.title } : t))
+        : [...tabs, { id, kind: "plan", levelId: activeId, title: level?.name ?? "Plan" }],
+    );
+    // Renames flow through the same path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, project.levels]);
+
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest("input, textarea, select")) return;
       const mod = event.ctrlKey || event.metaKey;
+      if (mod && (event.key === "k" || event.key === "K")) {
+        event.preventDefault();
+        setLauncherOpen((v) => !v);
+        return;
+      }
+      if (mod && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        handleSave();
+        return;
+      }
+      if (target.closest("input, textarea, select")) return;
       if (mod && !event.shiftKey && (event.key === "z" || event.key === "Z")) {
         event.preventDefault();
         undo();
@@ -193,6 +256,9 @@ export function App() {
         redo();
       } else if (mod) {
         return;
+      } else if (event.key === "F1" || event.key === "?") {
+        event.preventDefault();
+        setShortcutsOpen(true);
       } else if (event.key === "Escape") {
         if (ctx.current.pendingStart || ctx.current.pendingPoints.length > 0) {
           setPendingStart(null);
@@ -401,6 +467,11 @@ export function App() {
         setActiveLevelId(loaded.levels[0].id);
         setSelection(null);
         setPendingStart(null);
+        setPendingPoints([]);
+        setOpenViews([
+          { id: planTabId(loaded.levels[0].id), kind: "plan", levelId: loaded.levels[0].id, title: loaded.levels[0].name },
+          THREED_TAB,
+        ]);
         say(`Opened ${file.name}.`);
       })
       .catch((error: unknown) => say(error instanceof Error ? error.message : "Could not open file.", "error"))
@@ -433,8 +504,175 @@ export function App() {
     setActiveLevelId(next.levels[0].id);
     setSelection(null);
     setPendingStart(null);
+    setPendingPoints([]);
+    setOpenViews([
+      { id: planTabId(next.levels[0].id), kind: "plan", levelId: next.levels[0].id, title: next.levels[0].name },
+      THREED_TAB,
+    ]);
     say("Started a new project.");
   }
+
+  // ---------------------------------------------------------------------------
+  // View tabs and the command registry
+  // ---------------------------------------------------------------------------
+
+  function switchToTab(tab: ViewTab) {
+    if (tab.kind === "plan" && tab.levelId) {
+      setView("plan");
+      setActiveLevelId(tab.levelId);
+      setOpenViews((tabs) => (tabs.some((t) => t.id === tab.id) ? tabs : [...tabs, tab]));
+    } else {
+      setView("3d");
+      setOpenViews((tabs) => (tabs.some((t) => t.id === THREED_TAB.id) ? tabs : [...tabs, THREED_TAB]));
+    }
+    setPendingStart(null);
+    setPendingPoints([]);
+  }
+
+  function closeTab(id: string) {
+    setOpenViews((tabs) => {
+      const remaining = tabs.filter((t) => t.id !== id);
+      const list = remaining.length > 0 ? remaining : [THREED_TAB];
+      const wasActive = (view === "3d" ? THREED_TAB.id : planTabId(activeId)) === id;
+      if (wasActive) {
+        const next = list[0];
+        // Defer so we never setState during render of the updater.
+        queueMicrotask(() => switchToTab(next));
+      }
+      return list;
+    });
+  }
+
+  const kindLabel =
+    selection === null
+      ? ""
+      : { wall: "Wall", opening: "Opening", floor: "Floor", room: "Room", column: "Column" }[selection.kind];
+
+  function stub(id: string, title: string, description: string, tab: RibbonTabId | null, group: CommandSpec["group"]): CommandSpec {
+    return { id, title, description, tab, group, implemented: false, run: () => undefined };
+  }
+
+  const commands: CommandSpec[] = [
+    { id: "file.new", title: "New", description: "Start a new project.", tab: null, group: "file", shortcut: "Ctrl+N", implemented: true, run: handleNew },
+    { id: "file.open", title: "Open…", description: "Open a project file.", tab: null, group: "file", shortcut: "Ctrl+O", implemented: true, run: () => fileInputRef.current?.click() },
+    { id: "file.save", title: "Save", description: "Save the project to a file.", tab: null, group: "file", shortcut: "Ctrl+S", implemented: true, run: handleSave },
+    { id: "edit.undo", title: "Undo", description: "Undo the last change.", tab: null, group: "edit", shortcut: "Ctrl+Z", implemented: true, run: undo, enabled: () => canUndo(hist) },
+    { id: "edit.redo", title: "Redo", description: "Redo the last undone change.", tab: null, group: "edit", shortcut: "Ctrl+Shift+Z", implemented: true, run: redo, enabled: () => canRedo(hist) },
+    { id: "edit.delete", title: "Delete", description: "Delete the selected element.", tab: null, group: "edit", shortcut: "Delete", implemented: true, run: deleteSelection, enabled: () => selection !== null },
+    { id: "search.launcher", title: "Search commands", description: "Open the searchable command launcher.", tab: null, group: "help", shortcut: "Ctrl+K", implemented: true, run: () => setLauncherOpen(true) },
+    { id: "help.shortcuts", title: "Keyboard shortcuts", description: "Show the shortcut map.", tab: null, group: "help", shortcut: "F1", implemented: true, run: () => setShortcutsOpen(true) },
+    ...toolCommands(),
+    {
+      id: "level.add",
+      title: "Level",
+      description: "Add a new level above the highest one, named automatically; rename it in the browser or levels panel.",
+      tab: "architecture",
+      group: "datum",
+      implemented: true,
+      run: () => {
+        const top = project.levels[project.levels.length - 1];
+        handleAddLevel(`Level ${project.levels.length + 1}`, (top?.elevation ?? 0) + 3000);
+      },
+    },
+    ...viewCommands(),
+    {
+      id: "view.zoomTo",
+      title: "Zoom to selection",
+      description: "Centre the view on the selected element.",
+      tab: null,
+      group: "view",
+      implemented: true,
+      run: () => {
+        if (!selection) return;
+        const point = selectionPoint(project, selection);
+        if (point) sceneRef.current?.focusPlanPoint(point);
+      },
+      enabled: () => selection !== null,
+    },
+    stub("tool.ceiling", "Ceiling", "Ceiling by boundary sketch.", "architecture", "build"),
+    stub("tool.roof", "Roof", "Roof by footprint with overhang.", "architecture", "build"),
+    stub("tool.stair", "Stair", "Stair runs and landings.", "architecture", "circulation"),
+    stub("tool.railing", "Railing", "Railings on stairs and edges.", "architecture", "circulation"),
+    stub("tool.ramp", "Ramp", "Ramped elements.", "architecture", "circulation"),
+    stub("annotate.roomTag", "Room Tag", "Tag rooms with name, number and area.", "architecture", "room"),
+    stub("struct.foundation", "Foundation", "Isolated and wall foundations.", "structure", "structure"),
+    stub("struct.retainingWall", "Retaining Wall", "Retaining walls.", "structure", "structure"),
+    stub("struct.beam", "Beam", "Structural framing beams.", "structure", "structure"),
+    stub("struct.brace", "Brace", "Structural bracing.", "structure", "structure"),
+    stub("struct.structuralFloor", "Structural Floor", "Structural floor decks.", "structure", "structure"),
+    stub("struct.rebar", "Rebar", "Reinforcement and bar schedules.", "structure", "structure"),
+    stub("steel.connection", "Connection", "Steel connections.", "steel", "steel"),
+    stub("steel.fabrication", "Fabrication", "Fabrication elements.", "steel", "steel"),
+    stub("steel.cope", "Cope", "Cope steel elements.", "steel", "steel"),
+    stub("steel.split", "Split", "Split steel elements.", "steel", "steel"),
+    stub("import.dxf", "Import DXF", "Import 2D DXF drawings (roadmap M4/M9).", "insert", "insert"),
+    stub("import.ifc", "Link IFC", "Link or import IFC models (roadmap M9).", "insert", "insert"),
+    stub("import.glb", "Import GLB", "Import lightweight GLB references (roadmap M10).", "insert", "insert"),
+    stub("load.family", "Load Family", "Load reusable families into the project (roadmap M6).", "insert", "insert"),
+    stub("annotate.alignedDim", "Aligned Dimension", "Aligned dimensions (roadmap M4).", "annotate", "annotate"),
+    stub("annotate.angularDim", "Angular Dimension", "Angular dimensions (roadmap M4).", "annotate", "annotate"),
+    stub("annotate.detailLine", "Detail Line", "Detail lines (roadmap M4).", "annotate", "annotate"),
+    stub("annotate.text", "Text", "Text notes with leaders (roadmap M4).", "annotate", "annotate"),
+    stub("annotate.tag", "Tag", "Element tags (roadmap M4).", "annotate", "annotate"),
+    stub("view.section", "Section", "Building sections generated from the model (roadmap M4).", "annotate", "annotate"),
+    stub("view.elevation", "Elevation", "Elevations generated from the model (roadmap M4).", "annotate", "annotate"),
+    stub("view.callout", "Callout", "Callout views (roadmap M4).", "annotate", "annotate"),
+    stub("analyze.space", "Space", "MEP spaces (roadmap M8).", "analyze", "analyze"),
+    stub("analyze.zone", "Zone", "Zones (roadmap M8).", "analyze", "analyze"),
+    stub("analyze.heatingLoad", "Heating Load", "Heating load analysis (roadmap M8).", "analyze", "analyze"),
+    stub("analyze.coolingLoad", "Cooling Load", "Cooling load analysis (roadmap M8).", "analyze", "analyze"),
+    stub("mass.conceptual", "Conceptual Mass", "Conceptual massing (roadmap M6).", "massing", "massing"),
+    stub("mass.wall", "Wall by Face", "Wall by face (roadmap M6).", "massing", "massing"),
+    stub("mass.floor", "Floor by Face", "Floor by face (roadmap M6).", "massing", "massing"),
+    stub("site.toposurface", "Toposurface", "Site and terrain (roadmap M6).", "massing", "massing"),
+    stub("site.component", "Site Component", "Site components (roadmap M6).", "massing", "massing"),
+    stub("collab.worksets", "Worksets", "Worksets and model ownership (roadmap M11).", "collaborate", "collaborate"),
+    stub("collab.sync", "Synchronize", "Shared-model synchronization (roadmap M11).", "collaborate", "collaborate"),
+    stub("collab.interferenceCheck", "Interference Check", "Clash detection (roadmap M9).", "collaborate", "collaborate"),
+    stub("collab.publish", "Publish", "Publish to a common data environment (roadmap M11).", "collaborate", "collaborate"),
+    stub("manage.projectUnits", "Project Units", "Project unit formats (roadmap M4).", "manage", "manage"),
+    stub("manage.snaps", "Snaps", "Object snap settings (roadmap M5).", "manage", "manage"),
+    stub("manage.materials", "Materials", "Material library with appearance and physical properties (roadmap M10).", "manage", "manage"),
+    stub("manage.phases", "Phases", "Existing, demolished and new construction phases (roadmap M6).", "manage", "manage"),
+    stub("addins.extensionManager", "Extension Manager", "Extension API and manager (roadmap M12).", "addins", "addins"),
+  ];
+
+  function toolCommands(): CommandSpec[] {
+    const toolSpec = (id: string, t: Tool, title: string, description: string, shortcut: string, tab: RibbonTabId, group: CommandSpec["group"]): CommandSpec => ({
+      id,
+      title,
+      description,
+      tab,
+      group,
+      shortcut,
+      implemented: true,
+      run: () => changeTool(t),
+      isActive: () => tool === t,
+    });
+    return [
+      toolSpec("tool.select", "select", "Select", "Select elements to inspect and edit.", "S", "architecture", "tools"),
+      toolSpec("tool.wall", "wall", "Wall", "Draw chained walls; ends snap to join.", "W", "architecture", "build"),
+      toolSpec("tool.door", "door", "Door", "Place a door hosted in a wall.", "D", "architecture", "build"),
+      toolSpec("tool.window", "window", "Window", "Place a window hosted in a wall.", "N", "architecture", "build"),
+      toolSpec("tool.floor", "floor", "Floor", "Draw a floor boundary and close it.", "F", "architecture", "build"),
+      toolSpec("tool.room", "room", "Room", "Draw a room boundary; area is computed from it.", "R", "architecture", "build"),
+      toolSpec("tool.column", "column", "Column", "Place a rectangular column.", "C", "architecture", "build"),
+    ];
+  }
+
+  function viewCommands(): CommandSpec[] {
+    return [
+      { id: "view.plan", title: "Floor Plan", description: "Open the plan of the active level.", tab: "view", group: "view", implemented: true, run: () => setView("plan"), isActive: () => view === "plan" },
+      { id: "view.3d", title: "3D View", description: "Open the default 3D view.", tab: "view", group: "view", implemented: true, run: () => setView("3d"), isActive: () => view === "3d" },
+      { id: "view.wireframe", title: "Wireframe", description: "Wireframe visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("wireframe"), isActive: () => visualStyle === "wireframe" },
+      { id: "view.hiddenLine", title: "Hidden Line", description: "Hidden-line visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("hiddenLine"), isActive: () => visualStyle === "hiddenLine" },
+      { id: "view.shaded", title: "Shaded", description: "Shaded visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("shaded"), isActive: () => visualStyle === "shaded" },
+      { id: "view.resetCamera", title: "Reset Camera", description: "Reset the camera of the active view.", tab: "view", group: "view", implemented: true, run: () => sceneRef.current?.resetCamera() },
+      { id: "view.zoomFit", title: "Zoom to Fit", description: "Frame the default view extents.", tab: "view", group: "view", shortcut: "Home", implemented: true, run: () => sceneRef.current?.resetCamera() },
+    ];
+  }
+
+  const commandById = new Map(commands.map((c) => [c.id, c]));
 
   const hint =
     tool === "wall"
@@ -449,11 +687,11 @@ export function App() {
           ? `Click to place a column on ${activeLevel?.name ?? "the active level"}.`
           : tool === "door" || tool === "window"
             ? `Click near a wall on ${activeLevel?.name ?? "the active level"} to host a ${tool}.`
-            : "Click a wall, door, window, floor, room or column to select it. Drag to pan (plan) or orbit (3D).";
+            : "Click an element to select it. Drag to pan (plan) or orbit (3D). Ctrl+K opens the command launcher.";
 
   return (
     <div className="app">
-      <header className="toolbar">
+      <header className="qat">
         <div className="brand">revit-web</div>
         <div className="project-name">
           <RenameField
@@ -462,21 +700,30 @@ export function App() {
             onCommit={(name) => run("Rename project", (p) => ({ ...p, name }))}
           />
         </div>
-        <div className="group" role="group" aria-label="Tools">
-          {(["select", "wall", "door", "window", "floor", "room", "column"] as Tool[]).map((t) => (
-            <button key={t} className={tool === t ? "active" : ""} onClick={() => changeTool(t)} title={shortcutFor(t)}>
-              {labelFor(t)}
-            </button>
-          ))}
-        </div>
-        <div className="group" role="group" aria-label="View">
-          <button className={view === "plan" ? "active" : ""} onClick={() => setView("plan")}>
-            Plan
+        <div className="group" role="group" aria-label="Quick Access Toolbar">
+          <button onClick={handleNew} title="New project (Ctrl+N)">
+            New
           </button>
-          <button className={view === "3d" ? "active" : ""} onClick={() => setView("3d")}>
-            3D
+          <button onClick={() => fileInputRef.current?.click()} title="Open a project file (Ctrl+O)">
+            Open…
+          </button>
+          <button onClick={handleSave} title="Save the project (Ctrl+S)">
+            Save
+          </button>
+          <button onClick={undo} disabled={!canUndo(hist)} title="Undo (Ctrl+Z)">
+            Undo
+          </button>
+          <button onClick={redo} disabled={!canRedo(hist)} title="Redo (Ctrl+Shift+Z)">
+            Redo
+          </button>
+          <button onClick={() => setLauncherOpen(true)} title="Search commands (Ctrl+K)">
+            Search
+          </button>
+          <button onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts (F1)">
+            Help
           </button>
         </div>
+        <div className="spacer" />
         <label className="snap">
           Snap
           <select value={snapStep} onChange={(e) => setSnapStep(Number(e.target.value))}>
@@ -487,16 +734,6 @@ export function App() {
             ))}
           </select>
         </label>
-        <div className="spacer" />
-        <button onClick={undo} disabled={!canUndo(hist)} title="Undo (Ctrl+Z)">
-          Undo
-        </button>
-        <button onClick={redo} disabled={!canRedo(hist)} title="Redo (Ctrl+Shift+Z)">
-          Redo
-        </button>
-        <button onClick={handleNew}>New</button>
-        <button onClick={() => fileInputRef.current?.click()}>Open…</button>
-        <button onClick={handleSave}>Save</button>
         <input
           ref={fileInputRef}
           type="file"
@@ -509,50 +746,172 @@ export function App() {
         />
       </header>
 
-      <div className="body">
-        <aside className="panel left">
-          <LevelsPanel
-            project={project}
-            activeLevelId={activeId}
-            onSelect={(id) => {
-              setActiveLevelId(id);
-              setPendingStart(null);
-            }}
-            onAdd={handleAddLevel}
-            onRename={(id, name) => run("Rename level", (p) => renameLevel(p, id, name))}
-            onElevation={(id, mm) => run("Change level elevation", (p) => setLevelElevation(p, id, mm))}
-            onDelete={(id) => {
-              const level = levelById(project, id);
-              if (!window.confirm(`Delete ${level?.name ?? "this level"} and every wall and opening on it?`)) return;
-              if (run("Delete level", (p) => deleteLevel(p, id), `Deleted ${level?.name ?? "level"}.`) && id === activeId) {
-                setActiveLevelId(project.levels.find((l) => l.id !== id)?.id ?? activeId);
+      <Ribbon
+        tabs={RIBBON_TABS}
+        commands={commandById}
+        activeTab={ribbonTab}
+        onTabChange={(id) => {
+          setRibbonTab(id);
+          setContextualActive(false);
+        }}
+        contextual={
+          selection
+            ? {
+                title: `Modify | ${kindLabel}`,
+                commandIds: ["edit.delete", "view.zoomTo"],
               }
-            }}
-          />
-        </aside>
+            : null
+        }
+        contextualActive={contextualActive && selection !== null}
+        onContextualActivate={() => setContextualActive(true)}
+      />
+
+      <ViewTabs
+        tabs={openViews}
+        activeId={view === "3d" ? THREED_TAB.id : planTabId(activeId)}
+        onActivate={(id) => {
+          const tab = openViews.find((t) => t.id === id);
+          if (tab) switchToTab(tab);
+        }}
+        onClose={closeTab}
+      />
+
+      <div className="body">
+        {!leftCollapsed ? (
+          <aside className="panel left" style={{ width: leftWidth }}>
+            <ProjectBrowser
+              project={project}
+              openViews={openViews}
+              activeViewId={view === "3d" ? THREED_TAB.id : planTabId(activeId)}
+              onOpenView={switchToTab}
+            />
+            <LevelsPanel
+              project={project}
+              activeLevelId={activeId}
+              onSelect={(id) => {
+                setActiveLevelId(id);
+                setPendingStart(null);
+              }}
+              onAdd={handleAddLevel}
+              onRename={(id, name) => run("Rename level", (p) => renameLevel(p, id, name))}
+              onElevation={(id, mm) => run("Change level elevation", (p) => setLevelElevation(p, id, mm))}
+              onDelete={(id) => {
+                const level = levelById(project, id);
+                if (!window.confirm(`Delete ${level?.name ?? "this level"} and every element on it?`)) return;
+                if (run("Delete level", (p) => deleteLevel(p, id), `Deleted ${level?.name ?? "level"}.`)) {
+                  setOpenViews((tabs) => tabs.filter((t) => t.id !== planTabId(id)));
+                  if (id === activeId) {
+                    setActiveLevelId(project.levels.find((l) => l.id !== id)?.id ?? activeId);
+                  }
+                }
+              }}
+            />
+            <Splitter side="left" width={leftWidth} onWidth={setLeftWidth} />
+            <button className="collapse-btn" title="Collapse panel" onClick={() => setLeftCollapsed(true)}>
+              ‹
+            </button>
+          </aside>
+        ) : (
+          <button className="expand-btn" title="Expand Project Browser" onClick={() => setLeftCollapsed(false)}>
+            › Browser
+          </button>
+        )}
 
         <main className="viewport">
           <div className="canvas-host" ref={containerRef} />
           <div className="hint">{hint}</div>
           {message && <div className={`status ${message.kind}`}>{message.text}</div>}
+          <ViewControlBar
+            view={view}
+            onView={setView}
+            scale={scale}
+            onScale={setScale}
+            detail={detail}
+            onDetail={setDetail}
+            visualStyle={visualStyle}
+            onVisualStyle={setVisualStyle}
+            shadows={shadows}
+            onShadows={setShadows}
+          />
         </main>
 
-        <aside className="panel right">
-          <PropertiesPanel
-            project={project}
-            selection={selection}
-            onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
-            onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
-            onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
-            onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
-            onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}
-            onColumnPatch={(columnId, patch) => run("Edit column", (p) => updateColumn(p, columnId, patch))}
-            onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
-            onDeleteSelection={deleteSelection}
-          />
-        </aside>
+        {!rightCollapsed ? (
+          <aside className="panel right" style={{ width: rightWidth }}>
+            <PropertiesPanel
+              project={project}
+              selection={selection}
+              onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
+              onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
+              onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
+              onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
+              onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}
+              onColumnPatch={(columnId, patch) => run("Edit column", (p) => updateColumn(p, columnId, patch))}
+              onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
+              onDeleteSelection={deleteSelection}
+            />
+            <Splitter side="right" width={rightWidth} onWidth={setRightWidth} />
+            <button className="collapse-btn" title="Collapse panel" onClick={() => setRightCollapsed(true)}>
+              ›
+            </button>
+          </aside>
+        ) : (
+          <button className="expand-btn" title="Expand Properties" onClick={() => setRightCollapsed(false)}>
+            ‹ Properties
+          </button>
+        )}
       </div>
+
+      <StatusBar
+        selectionCount={selection ? 1 : 0}
+        toolLabel={labelFor(tool)}
+        snapStep={snapStep}
+        scale={scale}
+        projectName={project.name}
+        revision={project.revision}
+      />
+
+      {launcherOpen && (
+        <CommandLauncher commands={commands} onRun={(id) => commandById.get(id)?.run()} onClose={() => setLauncherOpen(false)} />
+      )}
+      {shortcutsOpen && (
+        <ShortcutsDialog
+          commands={commands}
+          extra={[
+            ["Esc", "Cancel the current drawing / back to Select"],
+            ["Enter", "Close a floor or room boundary"],
+            ["F/R/C", "Floor / Room / Column tools"],
+            ["Ctrl+K", "Command launcher"],
+          ]}
+          onClose={() => setShortcutsOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+/** A draggable divider that resizes the docked panel next to it. */
+function Splitter({ side, width, onWidth }: { side: "left" | "right"; width: number; onWidth(w: number): void }) {
+  return (
+    <div
+      className={`splitter ${side}`}
+      role="separator"
+      aria-orientation="vertical"
+      onMouseDown={(e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = width;
+        const move = (ev: MouseEvent) => {
+          const delta = side === "left" ? ev.clientX - startX : startX - ev.clientX;
+          onWidth(Math.min(480, Math.max(200, startWidth + delta)));
+        };
+        const up = () => {
+          window.removeEventListener("mousemove", move);
+          window.removeEventListener("mouseup", up);
+        };
+        window.addEventListener("mousemove", move);
+        window.addEventListener("mouseup", up);
+      }}
+    />
   );
 }
 
@@ -567,18 +926,36 @@ function validSelection(p: Project, selection: Selection): Selection {
   return found ? selection : null;
 }
 
-function labelFor(tool: Tool): string {
-  return { select: "Select", wall: "Wall", door: "Door", window: "Window", floor: "Floor", room: "Room", column: "Column" }[tool];
+function selectionPoint(p: Project, selection: Selection): Point | null {
+  if (!selection) return null;
+  if (selection.kind === "wall") {
+    const wall = wallById(p, selection.id);
+    return wall ? { x: Math.round((wall.start.x + wall.end.x) / 2), y: Math.round((wall.start.y + wall.end.y) / 2) } : null;
+  }
+  if (selection.kind === "opening") {
+    const opening = openingById(p, selection.id);
+    const wall = opening ? wallById(p, opening.hostWallId) : undefined;
+    if (!opening || !wall) return null;
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return {
+      x: Math.round(wall.start.x + (dx / len) * opening.offset),
+      y: Math.round(wall.start.y + (dy / len) * opening.offset),
+    };
+  }
+  if (selection.kind === "floor") {
+    const floor = p.floors.find((f) => f.id === selection.id);
+    return floor ? floor.boundary[0] : null;
+  }
+  if (selection.kind === "room") {
+    const room = p.rooms.find((r) => r.id === selection.id);
+    return room ? room.boundary[0] : null;
+  }
+  const column = p.columns.find((c) => c.id === selection.id);
+  return column ? column.position : null;
 }
 
-function shortcutFor(tool: Tool): string {
-  return {
-    select: "Select (S)",
-    wall: "Wall (W)",
-    door: "Door (D)",
-    window: "Window (N)",
-    floor: "Floor (F)",
-    room: "Room (R)",
-    column: "Column (C)",
-  }[tool];
+function labelFor(tool: Tool): string {
+  return { select: "Select", wall: "Wall", door: "Door", window: "Window", floor: "Floor", room: "Room", column: "Column" }[tool];
 }

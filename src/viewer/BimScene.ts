@@ -10,6 +10,7 @@ import type { Point, Project } from "../model/types";
 export type ViewMode = "plan" | "3d";
 export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column";
 export type Selection = { kind: "wall" | "opening" | "floor" | "room" | "column"; id: string } | null;
+export type VisualStyle = "shaded" | "hiddenLine" | "wireframe";
 
 export interface SceneHandlers {
   /** A click on the active level's plane, snapped to the snap step (integer mm). */
@@ -89,6 +90,9 @@ export class BimScene {
   private view: ViewMode = "plan";
   private tool: Tool = "select";
   private snapStep = 100;
+  /** Paper-scale denominator (e.g. 100 = 1:100). Room labels scale with it. */
+  private annotationScale = 100;
+  private detailLevel: "Coarse" | "Medium" | "Fine" = "Medium";
   private handlers: SceneHandlers;
   private pressAt: { x: number; y: number } | null = null;
   private disposed = false;
@@ -99,6 +103,8 @@ export class BimScene {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x1b1f27);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.planCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
@@ -157,6 +163,12 @@ export class BimScene {
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const sun = new THREE.DirectionalLight(0xffffff, 0.8);
     sun.position.set(12, 25, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -40;
+    sun.shadow.camera.right = 40;
+    sun.shadow.camera.top = 40;
+    sun.shadow.camera.bottom = -40;
     this.scene.add(sun);
     this.scene.add(new THREE.GridHelper(200, 200, 0x3a4150, 0x2a2f3a));
     this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup, this.labelGroup);
@@ -196,6 +208,71 @@ export class BimScene {
 
   setSnapStep(step: number): void {
     this.snapStep = step;
+  }
+
+  /** Shaded (default), hidden-line (flat colours) or wireframe. Applies to every model material. */
+  setVisualStyle(style: VisualStyle): void {
+    const wire = style === "wireframe";
+    for (const material of [...Object.values(this.materials), ...this.colorMaterials.values()]) {
+      if ("wireframe" in material) {
+        (material as THREE.MeshStandardMaterial).wireframe = wire;
+        (material as THREE.MeshStandardMaterial).flatShading = style === "hiddenLine";
+        material.needsUpdate = true;
+      }
+    }
+    this.renderer.setClearColor(style === "hiddenLine" ? 0xf2f3f5 : 0x1b1f27);
+  }
+
+  setShadows(on: boolean): void {
+    this.renderer.shadowMap.enabled = on;
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.DirectionalLight) {
+        obj.castShadow = on;
+      }
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = on;
+        obj.receiveShadow = on;
+      }
+    });
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** Sets the annotation scale (paper denominator). Room labels grow with it. */
+  setAnnotationScale(scale: number): void {
+    this.annotationScale = scale;
+    this.rebuild();
+  }
+
+  /** Detail level. Coarse hides room labels; Medium and Fine keep them. */
+  setDetailLevel(detail: "Coarse" | "Medium" | "Fine"): void {
+    this.detailLevel = detail;
+    this.rebuild();
+  }
+
+  /** Resets the camera of the active view to its default framing. */
+  resetCamera(): void {
+    if (this.view === "plan") {
+      this.planControls.target.set(0, 0, 0);
+      this.planCamera.position.set(0, 80, 0);
+      this.planCamera.lookAt(0, 0, 0);
+    } else {
+      this.orbitControls.target.set(0, 1, 0);
+      this.perspCamera.position.set(18, 16, 18);
+      this.perspCamera.lookAt(0, 1, 0);
+    }
+    this.activeControls().update();
+  }
+
+  /** Pans the plan camera so `point` sits at the centre of the view. */
+  focusPlanPoint(point: Point): void {
+    const world = planToWorld(point, this.activeElevationM());
+    this.planControls.target.set(world.x, 0, world.z);
+    this.planCamera.position.set(world.x, 80, world.z);
+    this.planCamera.lookAt(world.x, 0, world.z);
+    if (this.view === "3d") {
+      this.orbitControls.target.set(world.x, 0, world.z);
+    }
+    this.activeControls().update();
   }
 
   setProject(project: Project): void {
@@ -381,7 +458,7 @@ export class BimScene {
     // Rooms are plan annotations: a translucent fill and a label, never 3D geometry.
     if (this.view === "plan") {
       for (const face of roomFaces(project, visible)) {
-        this.addRoomFace(face, face.roomId === selectedRoomId);
+        this.addRoomFace(face, face.roomId === selectedRoomId, this.detailLevel !== "Coarse");
       }
     }
   }
@@ -458,7 +535,7 @@ export class BimScene {
   }
 
   /** Plan-only room fill and a canvas-texture label showing name and derived area. */
-  private addRoomFace(face: RoomFace, selected: boolean): void {
+  private addRoomFace(face: RoomFace, selected: boolean, withLabel: boolean): void {
     const shape = new THREE.Shape(face.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
     const geometry = new THREE.ShapeGeometry(shape);
     const mesh = new THREE.Mesh(geometry, selected ? this.materials.roomSelected : this.materials.roomFill);
@@ -468,7 +545,7 @@ export class BimScene {
     this.modelGroup.add(mesh);
 
     const room = this.project?.rooms.find((r) => r.id === face.roomId);
-    if (room) {
+    if (room && withLabel) {
       const areaM2 = (face.areaMm2 / 1e6).toFixed(2);
       const sprite = this.labelSprite(`${room.name}\n${areaM2} m²`);
       sprite.position.copy(planToWorld(face.labelPoint, face.z * MM_TO_SCENE + 0.05));
@@ -496,7 +573,9 @@ export class BimScene {
     const texture = new THREE.CanvasTexture(canvas);
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
     const sprite = new THREE.Sprite(material);
-    sprite.scale.set(2.4, 1.2, 1);
+    // Label size follows the annotation scale: 1:100 is the base size.
+    const k = this.annotationScale / 100;
+    sprite.scale.set(2.4 * k, 1.2 * k, 1);
     return sprite;
   }
 

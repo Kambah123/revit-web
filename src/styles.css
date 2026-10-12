@@ -106,3 +106,141 @@ fieldset .field { margin-bottom: 0; }
   display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px;
   border: 1px solid var(--border); vertical-align: -1px;
 }
+
+/* ---------------------------------------------------------------------------
+   Professional workspace: quick access toolbar, ribbon, tabs, browser, status
+   --------------------------------------------------------------------------- */
+
+.qat {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 12px; background: var(--panel-2); border-bottom: 1px solid var(--border);
+}
+.qat .brand { margin-right: 4px; }
+
+.ribbon { background: var(--panel); border-bottom: 1px solid var(--border); user-select: none; }
+.ribbon-tabs { display: flex; gap: 2px; padding: 4px 10px 0; }
+.ribbon-tabs button {
+  border: none; background: none; color: var(--muted); padding: 5px 12px; border-radius: 6px 6px 0 0;
+}
+.ribbon-tabs button.active { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-bottom-color: var(--panel); }
+.ribbon-tabs button.contextual { color: var(--accent); }
+.ribbon-tabs button.contextual.active { color: #0b1620; background: var(--accent); border-color: var(--accent); }
+.ribbon-body {
+  display: flex; gap: 4px; padding: 6px 10px; background: var(--panel);
+  overflow-x: auto; min-height: 86px;
+}
+.ribbon-group { display: flex; flex-direction: column; align-items: center; padding: 0 8px; border-right: 1px solid var(--border); }
+.ribbon-group:last-child { border-right: none; }
+.ribbon-group-cmds { display: flex; gap: 4px; flex: 1; align-items: flex-start; }
+.ribbon-group-title { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.ribbon-cmd {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: 72px; padding: 6px 2px; background: none; border: 1px solid transparent; border-radius: 6px;
+  font-size: 11px; line-height: 1.2; color: var(--text); text-align: center;
+}
+.ribbon-cmd:hover:not(:disabled) { border-color: var(--accent); background: var(--panel-2); }
+.ribbon-cmd.active { background: var(--accent); color: #0b1620; border-color: var(--accent); }
+.ribbon-cmd:disabled { opacity: 0.4; cursor: not-allowed; }
+.ribbon-cmd.unimplemented { opacity: 0.38; }
+
+.view-tabs {
+  display: flex; gap: 2px; padding: 4px 8px 0; background: var(--panel-2);
+  border-bottom: 1px solid var(--border); overflow-x: auto;
+}
+.view-tab {
+  display: flex; align-items: center; background: var(--panel); border: 1px solid var(--border);
+  border-bottom: none; border-radius: 6px 6px 0 0;
+}
+.view-tab.active { background: var(--bg); border-color: var(--accent); }
+.view-tab > button {
+  border: none; background: none; padding: 5px 10px; color: var(--muted); font-size: 12px;
+}
+.view-tab.active > button { color: var(--text); }
+.view-tab-close {
+  border: none; background: none; color: var(--muted); padding: 2px 8px; font-size: 14px;
+}
+.view-tab-close:hover { color: var(--danger); }
+
+.view-control-bar {
+  position: absolute; left: 12px; bottom: 12px; display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px; border-radius: 6px; background: rgba(20, 24, 32, 0.92); border: 1px solid var(--border);
+}
+.view-control-bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.view-control-bar select { padding: 2px 6px; }
+
+.status-bar {
+  display: flex; align-items: center; gap: 10px; padding: 4px 12px;
+  background: var(--panel-2); border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 12px;
+}
+.status-sep { width: 1px; height: 14px; background: var(--border); }
+
+.hint { left: 12px; bottom: 64px; }
+
+.browser h2 { margin-bottom: 8px; }
+.tree h3 { margin: 12px 0 4px; }
+.tree ul { list-style: none; padding: 0; margin: 0; }
+.tree-item {
+  width: 100%; text-align: left; background: none; border: 1px solid transparent;
+  padding: 3px 6px; border-radius: 4px; color: var(--text); font-size: 12px;
+  display: flex; align-items: center; gap: 6px;
+}
+.tree-item:hover:not(.static) { border-color: var(--accent); }
+.tree-item.active { background: var(--panel-2); border-color: var(--accent); }
+.tree-item.static { cursor: default; color: var(--muted); }
+.tree-icon {
+  font-size: 9px; font-weight: 700; color: var(--accent); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0 3px;
+}
+.tree details { margin: 2px 0; }
+.tree summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.panel.left .browser { max-height: 55%; overflow-y: auto; padding-right: 4px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+
+.splitter {
+  position: absolute; top: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 5;
+}
+.splitter.left { right: -3px; }
+.splitter.right { left: -3px; }
+.splitter:hover { background: var(--accent); opacity: 0.5; }
+.panel { position: relative; }
+
+.collapse-btn {
+  position: absolute; top: 8px; right: 8px; padding: 2px 8px; font-size: 12px;
+}
+.panel.left .collapse-btn { right: 8px; }
+.expand-btn {
+  writing-mode: vertical-rl; padding: 10px 4px; border-radius: 0 6px 6px 0; font-size: 12px;
+  background: var(--panel); color: var(--muted); border: 1px solid var(--border); border-left: none;
+}
+
+.launcher-backdrop {
+  position: fixed; inset: 0; background: rgba(10, 12, 18, 0.55); z-index: 50;
+  display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh;
+}
+.launcher {
+  width: min(560px, 90vw); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.launcher input {
+  width: 100%; padding: 10px 12px; font-size: 15px; border-radius: 8px; margin-bottom: 8px;
+}
+.launcher-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; }
+.launcher-item {
+  width: 100%; display: flex; gap: 10px; justify-content: space-between; align-items: center;
+  background: none; border: 1px solid transparent; padding: 8px 10px; border-radius: 6px; text-align: left;
+}
+.launcher-item.active { background: var(--panel-2); border-color: var(--accent); }
+.launcher-item.unimplemented { opacity: 0.55; cursor: not-allowed; }
+
+.dialog {
+  width: min(480px, 90vw); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.dialog h2 { margin-top: 0; }
+.shortcut-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.shortcut-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.shortcut-table td:first-child { width: 140px; }
+kbd {
+  background: var(--panel-2); border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 6px; font-size: 12px;
+}
