@@ -6,6 +6,6 @@ interface Window {
     project(): import("./model/types").Project;
     screenOf(point: import("./model/types").Point): { x: number; y: number };
     meshCount(): number;
-    view(): "plan" | "3d";
+    view(): "plan" | "3d" | "elevation";
   };
 }

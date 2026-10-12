@@ -34,6 +34,7 @@ Environment knobs for `e2e/*.e2e.mjs`: `APP_URL`, `CHROME_PATH`, `CHROME_ARGS`, 
 | Polygons & quantities | `src/__tests__/polygon.test.ts`, `quantities.test.ts` | shoelace areas, self-intersection rejection, derived quantities. |
 | Element commands | `src/__tests__/elements.test.ts` | materials, floor/column/ceiling/roof types and instances, cascades, invalid-edit rejection. |
 | Element geometry | `src/__tests__/elementGeometry.test.ts` | slab elevations, hip-roof ridge derivation, visible-level rules, rectangle rules. |
+| Elevation projections | `src/__tests__/elevation.test.ts` | viewer-right axis mapping, hulls, wall/opening rectangles, roof silhouettes per direction, column spans, level datums. |
 | Schema migrations | `src/__tests__/schema.test.ts` | deterministic round-trip, v1→v2→v4 and v3→v4 migrations, malformed-file rejection. |
 
 ## Integration tests

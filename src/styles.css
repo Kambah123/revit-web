@@ -244,3 +244,19 @@ kbd {
   background: var(--panel-2); border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: 4px; padding: 1px 6px; font-size: 12px;
 }
+
+/* ---- Generated elevations (SVG projections of the model) ------------------ */
+.elevation-host {
+  position: absolute; inset: 0; background: var(--bg); overflow: hidden;
+}
+.elevation-svg { width: 100%; height: 100%; display: block; }
+.elev-wall { fill: #8b93a5; stroke: var(--border); stroke-width: 4; }
+.elev-door { fill: #c98552; stroke: #8a5a33; stroke-width: 4; }
+.elev-window { fill: #6fb7d9; stroke: #46738c; stroke-width: 4; }
+.elev-floor { fill: #767d8f; stroke: var(--border); stroke-width: 3; }
+.elev-ceiling { fill: #9aa3b5; stroke: var(--border); stroke-width: 3; }
+.elev-column { fill: #6c7386; stroke: var(--border); stroke-width: 4; }
+.elev-roof { fill: #9c6b52; stroke: #6e4a37; stroke-width: 5; }
+.elev-level { stroke: #e0b050; stroke-width: 3; stroke-dasharray: 24 16; }
+.elev-level-tick { fill: var(--bg); stroke: #e0b050; stroke-width: 3; }
+.elev-label { fill: var(--text); font-family: system-ui, sans-serif; }

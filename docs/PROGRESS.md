@@ -35,7 +35,11 @@ Latest state first. Every slice: intent, work, verification (real results only),
 - Fixed a real geometry bug found by tests: segment intersection compared orientation values instead of signs (D12); fixed 3D visibility so the 3D view shows all levels while plan keeps the underlay rule (D11 — caught by screenshot inspection).
 - Verified: `tsc` clean, 89 unit tests pass (13 new incl. hip-roof ridge derivation, rectangle rules, ceiling/roof commands, cascade), `npm run build` passes; e2e `slice1` 17/17, `slice2` 11/11, `slice3` 14/14, `slice4` 9/9 (51 checks total; roof draw/edit/refusal, ceiling draw/edit, 3D render, undo/redo); screenshot `slice4-3d.png` inspected — hip roof with ridge renders correctly.
 
-**Next task:** M4 views and documentation — sections and elevations generated from the model (orthographic cuts of the same derived geometry), view ranges, dimensions, annotations; then sheets and PDF/DXF export. Also small: wall material assignment in properties (type material dropdown).
+**Slice 5 (this commit): elevations generated from the model (M4 start).**
+- `src/geometry/elevation.ts`: pure projections (viewer-right axis per facade naming, wall faces unioned from split solids, opening rects, slab/column rects, roof silhouettes as convex hulls — trapezoid from the sides, triangle from the ends, level datums); `src/ui/ElevationView.tsx` SVG renderer (read-only); Project Browser "Views (Elevations)"; view tabs `elev:<dir>`; View ribbon commands (4 elevations); modelling shortcuts inert in elevations.
+- Verified: `tsc` clean, 94 unit tests pass (5 new), `npm run build` passes; e2e `slice1` 17/17, `slice2` 11/11, `slice3` 14/14, `slice4` 9/9, `slice5` 11/11 (62 checks total; elevation open/read-only/tab-close, triangle-from-end assert); screenshot `slice5-elevation.png` inspected twice — caught and fixed level labels overpainted by the wall face (datums now draw over geometry).
+
+**Next task:** M4 continues — sections generated from cut planes, then dimensions/annotations; then sheets and PDF/DXF export (M5). Also small: wall material assignment in properties (type material dropdown).
 
 ---
 
