@@ -1,44 +1,55 @@
 # Progress log
 
-Latest state first. Every slice: intent, work, verification (real results only), commit, next task.
+Latest state first. Record only executed commands/results; historical sessions follow current status.
 
-## Session 2026-10-12 — Phases 0–2 done; M3 modelling expanded (slices 2–4)
+## Session 2026-10-12 — Revit/APS audit, wall material UI, and schema/docs reconciliation
 
-**Branch/commit at start:** `arena/63a6b55e-revit-web` @ `bd42fa0` (squash-merge of the previous session's slice 1; historical `4035013`/`ddec16a` absent from this clone — see DECISIONS D4).
+**Branch/base:** `arena/11b23c70-revit-web` from `ce68041c55cb47d950bf22d084ec54b326c44e19` (`main`). No APS dependency, credentials, server or upload flow was added.
 
-**Baseline measured (before any change):**
+**Repository/model audit:** inspected the React/TypeScript/Vite/Three.js source, model schema v4, migrations, validation, commands, derived geometry/quantities, history, local persistence, UI, tests and existing docs. Compared app concepts with official Autodesk Revit API/SDK, Model Derivative, Viewer, OAuth, Automation and pricing documentation. See [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md) for the schema mapping, integration boundary, APS cost/setup assumptions and explicit no-go recommendation.
 
-| Check | Result |
+**Implementation (small scope):**
+- Added a wall type material selector to the existing Properties panel, wired to existing `updateWallType`/`WallType.materialId`; no schema bump.
+- Native Three.js walls now use the referenced project's display color in the normal active-level state; selected-wall highlight and below-level tint keep precedence.
+- Added a development-only wall-color e2e hook and regression coverage for assignment, invalid material rejection, rendered color and undo/redo.
+- Added `npm run e2e:all` to run the four existing browser suites and corrected slice 2's stale label: the v2 fixture migrates to schema v4, not v3.
+- Reconciled README, scope, architecture, roadmap, limitations, reference inventory and decision/progress docs with the checked-out schema/UI. APS remains a proposed isolated, read-only prototype only.
+
+**Verification:**
+
+| Command | Outcome |
 | --- | --- |
-| `npx tsc --noEmit` | pass |
-| `npx vitest run` | 6 files, 46 tests pass |
-| `npm run build` | pass (chunk-size warning: three.js ≈ 671 kB) |
-| System Chrome | none; portable Chromium 153 via `@sparticuz/chromium` works headless with WebGL (DECISIONS D6) |
-| Reference PDF/screenshot | not present in environment (DECISIONS D5) |
+| `npm ci` | 190 packages installed. Full dev dependency audit reported 13 advisories (3 moderate, 8 high, 2 critical); `npm audit --omit=dev` reports 0 production dependency vulnerabilities. No dependency upgrades attempted. |
+| `npm test` | 10 files, **90 tests passed**. |
+| `npm run typecheck` | Passed (`tsc --noEmit`). |
+| `npm run build` | Passed. Main JS chunk 769.75 kB / 207.12 kB gzip; Vite's >500 kB advisory warning remains. |
+| `LD_LIBRARY_PATH=/tmp/al2023/lib CHROME_PATH=/tmp/chromium APP_URL=http://localhost:5173 npm run e2e:all` | All 4 browser suites passed: slice1 18, slice2 11, slice3 14, slice4 9 — **52 checks total**, no console/page/request errors. |
+| `npm audit --omit=dev` | `found 0 vulnerabilities`. |
 
-**Phase 0 (commit `7a558a8`):** `PRODUCT_SCOPE.md` (feature audit A–L), `REFERENCE_AUDIT.md`, `ROADMAP.md` (M0–M12 with DoD), `DECISIONS.md`, `KNOWN_LIMITATIONS.md`, `TESTING.md`, this log.
+Portable Chromium was extracted from the test-only npm package to `/tmp/chromium`; its NSS/NSPR runtime libraries are under `/tmp/al2023/lib`. The dev server used port 5173. Build and full browser checks are green; warnings/issues are recorded in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
-**Slice 2a (commit `4170662`): canonical model — materials, floors, rooms, columns (schema v3).**
-- Polygon helpers (integer-safe shoelace area/centroid, self-intersection checks); quantities module (all values derived); commands + validation; level-delete cascade; schema v3 with v2 and v1 migrations.
-- Verified: `tsc` clean, 75 unit tests pass (29 new), `npm run build` passes.
-
-**Slice 2b (commit `82eb07f`): viewer + UI for the new elements.**
-- Floor slabs (extruded boundaries, material colours), columns, plan-only room fills with name+area labels; polygon-chain drawing (Floor F / Room R / Column C); properties editors; derived quantities in the palette.
-- Verified: `slice1` 17/17, `slice2` 11/11 in headless Chromium; screenshots inspected.
-
-**Slice 3 (commit `135b331`): professional workspace (roadmap M2).**
-- Command registry (`src/app/ribbon.ts`) as single source of truth for ribbon, Ctrl+K launcher and shortcuts; 11 ribbon tabs; 40+ unimplemented commands disabled with "Not implemented yet" tooltips; QAT; contextual Modify ribbon; Project Browser; view tabs; View Control Bar (scale/detail/visual style/shadows — real view state); status bar; F1 shortcut map; resizable/collapsible panels.
-- Verified: `slice1` 17/17, `slice2` 11/11, `slice3` 14/14; screenshots `slice3-workspace.png`, `slice3-wireframe.png` inspected.
-
-**Slice 4 (this commit): ceilings and hip roofs with overhangs (M3 finish).**
-- Schema v4: `Ceiling` (boundary + height + type), `Roof` (rectangular footprint + overhang + rise + type) with hip-roof derived geometry (ridge along the longer axis, four slopes + soffit); commands, validation, migrations (v3→v4 plus chain); Ceiling (E) and Roof (O) tools share the boundary-chain workflow; properties editors; pick priorities.
-- Fixed a real geometry bug found by tests: segment intersection compared orientation values instead of signs (D12); fixed 3D visibility so the 3D view shows all levels while plan keeps the underlay rule (D11 — caught by screenshot inspection).
-- Verified: `tsc` clean, 89 unit tests pass (13 new incl. hip-roof ridge derivation, rectangle rules, ceiling/roof commands, cascade), `npm run build` passes; e2e `slice1` 17/17, `slice2` 11/11, `slice3` 14/14, `slice4` 9/9 (51 checks total; roof draw/edit/refusal, ceiling draw/edit, 3D render, undo/redo); screenshot `slice4-3d.png` inspected — hip roof with ridge renders correctly.
-
-**Next task:** M4 views and documentation — sections and elevations generated from the model (orthographic cuts of the same derived geometry), view ranges, dimensions, annotations; then sheets and PDF/DXF export. Also small: wall material assignment in properties (type material dropdown).
+**Next:** M4 model-derived views/documentation (sections/elevations/RCP, view ranges, annotations, sheets and tested PDF/DXF), after scope/acceptance criteria are reviewed. Any APS prototype requires the approvals listed in `REVIT_API_AUDIT.md`; recommendation remains no-go now.
 
 ---
 
-## Session (previous) — Slice 1 (merged as `bd42fa0`)
+## Historical session 2026-10-12 — M0–M3 foundation and schema v4 (prior branch)
 
-BIM model with hosted doors/windows, plan and 3D views, undo/redo, autosave; 46 unit tests + 17-step e2e (verified on that branch). See `ARCHITECTURE.md` §4 for its verification record.
+**Starting branch/commit:** `arena/63a6b55e-revit-web` @ `bd42fa0` (prior session; not this session's current branch).
+
+**Baseline at that time:** `npx tsc --noEmit` passed; Vitest 46 tests passed; build passed with a Three.js chunk warning. Portable Chromium was used for browser tests (see `DECISIONS.md` D6).
+
+**Slice 2a:** materials, floors, rooms and columns (schema v3); polygon helpers, quantities, commands/validation, level-delete cascade, v1/v2 migrations. Verified typecheck, 75 unit tests and build.
+
+**Slice 2b:** floor slabs, columns, plan-only room fills/name/area, polygon drawing tools, properties and quantities. Browser suites reported slice1 17/17 and slice2 11/11.
+
+**Slice 3:** professional workspace: command registry; 11 ribbon tabs; Quick Access Toolbar; contextual Modify ribbon; Project Browser; view tabs; View Control Bar; status; Ctrl+K launcher; shortcut map; resizable/collapsible panels. Browser suites reported slice1 17/17, slice2 11/11 and slice3 14/14.
+
+**Slice 4:** schema v4 ceilings and simple hip roofs; commands, validation, v3→v4 migration, boundary-chain tools, properties, picking, and fixes for polygon intersection and 3D all-level visibility. At that time, unit suite reported 89 tests and all four browser suites reported 51 checks (slice1 17, slice2 11, slice3 14, slice4 9). The current session adds wall material UI/rendering and expands slice1 to 18 checks.
+
+Historical next-task note (superseded): finish M3 by adding wall material assignment. Completed in the current session above.
+
+---
+
+## Earlier historical session — Slice 1 (merged before the prior branch)
+
+Implemented the initial BIM model with hosted doors/windows, plan and 3D views, undo/redo, autosave and project JSON. The prior session started from a squash-merged representation of this work; see historical decisions in [`DECISIONS.md`](DECISIONS.md).

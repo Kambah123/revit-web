@@ -211,7 +211,7 @@ try {
   assert.equal(project.materials.length, 1);
   assert.equal(project.wallTypes[0].materialId, project.materials[0].id);
   assert.equal(project.walls.length, 1);
-  step("opens a schema v2 file and migrates it to schema v3");
+  step("opens a schema v2 file and migrates it to schema v4");
 
   // 10. Clean console --------------------------------------------------------
   assert.deepEqual(problems, [], `browser problems:\n${problems.join("\n")}`);

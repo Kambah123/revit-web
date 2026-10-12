@@ -1,156 +1,91 @@
-# Product scope and feature inventory
+# Product scope and current feature inventory
 
-Date: 2026-10-12. Baseline: branch `arena/63a6b55e-revit-web` at `bd42fa0` (slice 1 merged to main).
+**Reverified:** 2026-10-12 (UTC)
+**Repository:** `arena/11b23c70-revit-web`, starting from `ce68041`; canonical model schema v4.
+**Detailed Revit/APS comparison and recommendations:** [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
-## 1. Product vision
+## Product vision
 
-A browser-based Building Information Modeling platform in which architectural, structural and MEP elements share one canonical, typed, serializable building model. The same model drives floor plans, reflected ceiling plans, 3D views, elevations, sections, schedules, sheets and exports; edits propagate consistently through every derived view. Rendered meshes are never the source of truth.
+A browser-based BIM editor with one authoritative, typed, serializable building model. Plans and 3D are projections of that model; rendering meshes are derived. The application can grow toward model-driven views, schedules, quantities and exchange, but those future capabilities are not implied by the product name or by Autodesk file viewing.
 
-Users should be able to design a building, inspect it in 2D and 3D, edit parameters, generate views and documentation, calculate quantities, coordinate disciplines, and exchange data with other software (DXF, PDF, IFC, BCF, CSV/XLSX, GLB).
+## Status key
 
-## 2. Feature inventory audit (master prompt §6)
+- **Implemented** — present in this checkout; verification is listed in [`TESTING.md`](TESTING.md).
+- **Partial** — a deliberately limited version exists; the boundary is stated.
+- **Not implemented** — no supported workflow or code in this repository.
+- **Optional research only** — proposed integration, not implemented or required by the editor.
 
-Legend: **[V]** implemented and verified in this repository today · **[P]** partial · **[N]** not implemented (planned) · **[B]** blocked · **[O]** intentionally out of scope for now.
+## A. Workspace and editing UI
 
-### A. Professional workspace and UI
-
-| Feature | Status | Evidence / gap |
+| Feature | Status | Current boundary |
 | --- | --- | --- |
-| Ribbon tabs and grouped commands | [N] | Single flat toolbar exists (`src/App.tsx`); planned in roadmap milestone M2. |
-| Quick Access Toolbar | [N] | Planned M2. |
-| Contextual ribbon commands | [N] | Planned M2. |
-| Project Browser | [N] | Only a levels panel (`src/ui/LevelsPanel.tsx`); planned M2. |
-| Properties palette | [P] | `src/ui/PropertiesPanel.tsx` edits walls/openings; lacks type selector and other categories; M2/M3. |
-| Multiple document/view tabs | [N] | One viewport; planned M2. |
-| 2D and 3D workspace | [P] | Plan (orthographic cut) + 3D (orbit) of the same derived geometry; view system minimal. |
-| View Control Bar | [N] | Planned M2/M4. |
-| Status bar | [P] | Status message area only; planned M2. |
-| Tooltips and keyboard shortcuts | [P] | Shortcuts S/W/D/N, Esc, Delete, Ctrl+Z/Y documented in README; tooltips are native `title`. |
-| Searchable command launcher | [N] | Planned M2. |
-| Resizable/collapsible panels | [N] | Panels fixed; planned M2. |
-| Selection feedback and contextual controls | [P] | Highlight material + properties; no contextual ribbon yet. |
-| Undo, redo, save, open, recovery | [V] | `src/app/history.ts`, `src/model/schema.ts`, `src/persistence/autosave.ts`; e2e verified. |
-| Project units and settings dialogs | [P] | Units fixed to mm (`src/model/units.ts`); no dialogs; planned M2/M4. |
-| Empty states and validation messages | [P] | Message area + command errors; needs polish. |
+| Ribbon, command registry, Quick Access Toolbar | Implemented | Eleven ribbon tabs; implemented commands are enabled, unsupported commands remain disabled with explanatory tooltips. |
+| Contextual Modify ribbon | Implemented | Follows selection; does not imply every Revit contextual command exists. |
+| Project Browser | Implemented | Levels and views; not a full Revit Browser tree or linked-project browser. |
+| Properties palette | Partial | Supports the app's implemented elements and selected properties. It is not a generic Revit parameter palette. |
+| Plan and 3D view tabs | Implemented | Per-level plan tabs plus one native Three.js 3D view. Views are app UI state, not Revit `View` elements. |
+| View Control Bar | Partial | Scale, detail level, visual style and shadows affect the current view; these settings are not saved as view templates. |
+| Status, snapping and tool hints | Implemented | Reports current app editing state; no worksharing or Revit status semantics. |
+| Searchable command launcher / shortcut dialog | Implemented | `Ctrl+K` launcher and `F1` shortcut reference; disabled commands are discoverable but not executable. |
+| Resizable/collapsible side panels | Implemented | Browser and Properties panels are adjustable in the current workspace. |
+| Accessibility and professional polish | Partial | Keyboard commands exist; a full WCAG/accessibility and localization audit remains open. |
 
-### B. Architectural modelling
+## B. Canonical model and architectural editing
 
-| Feature | Status | Evidence / gap |
+| Feature | Status | Current boundary |
 | --- | --- | --- |
-| Levels and grids | [P] | Levels [V]; grids [N] (M3/M5). |
-| Walls, wall types, layered assemblies, joins | [P] | Walls, wall types, endpoint joins [V]; no layered assemblies, joins only at exact endpoints (M6). |
-| Doors, windows, hosted openings | [V] | Hosted in walls, validated fit, cascade delete; e2e verified. |
-| Floors and ceilings | [N] | M3. |
-| Roofs and overhangs | [N] | M3. |
-| Columns, beams, structural framing | [N] | Columns M3; framing M7. |
-| Stairs, railings, ramps | [N] | M6. |
-| Curtain walls and facades | [N] | M6. |
-| Rooms, room boundaries, areas | [N] | M3. |
-| Materials and finishes | [N] | M3. |
-| Building components / reusable families | [P] | Wall types and opening types act as simple families; general family system M6. |
-| Constraints, alignments, reference planes | [P] | Referential validation [V]; explicit constraints/reference planes M5/M6. |
-| Site boundaries and terrain | [N] | M6. |
-| Phases (existing/demolished/new) | [N] | M6. |
-| Design options | [N] | M6. |
+| Project, levels, integer-mm units | Implemented | `src/model/types.ts`; linear values are integer millimetres relative to the project datum. |
+| Walls and wall types | Partial | Straight centreline walls, basic endpoint joins, type thickness, height, level and coordinates. Not compound, curtain, stacked or fully constrained Revit walls. |
+| Doors/windows and hosting | Partial | Rectangular openings hosted along straight walls; fit/overlap validation and wall-delete cascade. Not Revit family instances. |
+| Floors and floor types | Partial | Explicit polygon slab extruded down from the level. No slope, floor openings, layer stack or boundary editing. |
+| Rooms | Partial | Explicit polygon, name/number and derived shoelace area. Not room-bounding topology or net-of-wall Revit `Room.Area`. |
+| Rectangular columns and types | Partial | Unrotated rectangular extrusion; no structural family, base/top offsets or analytical model. |
+| Ceilings and types | Partial | Horizontal polygon panel at a level-relative height; no reflected ceiling plan. |
+| Roofs and types | Partial | Derived hip roof on an axis-aligned rectangular footprint; no arbitrary/native Revit roof sketch. |
+| Materials | Partial | Project has built-in material records with display colours. Wall type can now select a material; this is not a physical/thermal/appearance asset library and no material CRUD workflow exists. |
+| Type/instance editing | Partial | Separate type and instance records for current categories; a few selectors and type edits. No generic parameter-definition/binding framework. |
+| Stairs, railings, ramps, curtain walls, grids, reference planes, site/terrain | Not implemented | See [`ROADMAP.md`](ROADMAP.md); don't substitute generic boxes and call them native elements. |
+| Structural or MEP systems/calculations | Not implemented | No structural/MEP connectivity, analysis, code checking or adequacy claims. |
 
-### C. Parametric object and family system
+## C. Geometry, views and quantities
 
-| Feature | Status | Notes |
+| Feature | Status | Current boundary |
 | --- | --- | --- |
-| Element types and instances | [P] | WallType, OpeningType [V]; Floor/Column types planned with their elements. |
-| Type and instance parameters | [P] | Basic parameters [V]; parameter framework generalisation M6. |
-| Stable object identities | [V] | Deterministic ids preserved across save/reopen (e2e verified). |
-| Hosted components | [V] | Doors/windows hosted in walls with lifetime cascade. |
-| Constraints and reference relationships | [P] | Host + fit validation [V]. |
-| Family placement and parameter editing | [P] | Opening placement by offset [V]. |
-| Reusable project libraries | [N] | M6. |
-| Validated geometry regeneration | [V] | Derived geometry recomputed from model on every change (`src/geometry/`). |
-| Parameter-driven updates | [V] | Type edit updates all instances (e2e/unit verified). |
-| Safe handling of invalid/deleted dependencies | [V] | Commands refuse invalid states; cascades documented (deleteLevel/deleteWall). |
+| Native Three.js plan view | Implemented | Orthographic plan, fixed 1200 mm cut plane, one plan per level; simple symbology. |
+| Native Three.js 3D view | Implemented | Derived app geometry, basic visual styles and shadows. Not Autodesk Viewer. |
+| Geometry regeneration | Implemented | `src/geometry/` builds from canonical data; geometry is not saved as the source of truth. |
+| Basic quantities | Partial | Room/floor area and wall, floor and column quantities are derived by app-specific formulae. They are not certified Revit schedules or quantity-takeoff parity. |
+| RCP, elevations, sections, view ranges, dimensions, tags, sheets | Not implemented | Planned; current view tabs do not represent these native view objects. |
+| Schedules, filters, formulas, material takeoffs, costing | Not implemented | Derived quantities in Properties are not schedules or a BOQ. |
 
-### D. 2D drafting and views
+## D. Commands, validation, history and persistence
 
-| Feature | Status | Notes |
+| Feature | Status | Current boundary |
 | --- | --- | --- |
-| Floor plans | [P] | One plan per active level with cut plane at 1200 mm; no per-view settings yet. |
-| Reflected ceiling plans | [N] | M4. |
-| Elevations | [N] | M4 (generated from model + view rules). |
-| Building and detail sections | [N] | M4. |
-| 3D perspective and orthographic views | [P] | Orthographic plan + perspective 3D [V]. |
-| Section boxes and clipping | [N] | M4. |
-| View ranges and level-aware visibility | [P] | Levels below active shown translucent; cut height constant. |
-| Dimensions and temporary dimensions | [N] | M4. |
-| Text, leaders, tags, symbols, callouts | [N] | M4. |
-| Detail components and drafting views | [N] | M4/M5. |
-| View templates and visibility filters | [N] | M5. |
-| Scale, line weights, detail levels, visual styles | [N] | M2 (view control bar) then M4. |
-| Grids and datum visibility | [N] | M5. |
-| Consistent view regeneration after model edits | [V] | All views rebuilt from derived geometry. |
+| Immutable edit commands and validation | Implemented | Commands validate the complete app project; invalid edits leave current state unchanged. |
+| Undo/redo | Implemented | In-memory snapshots; history is not saved to project JSON. |
+| Autosave/recovery | Implemented | Single browser-local storage slot; no server backup or recovery history. |
+| App JSON save/open | Implemented | Versioned `*.revit-web.json`; current schema v4; v1/v2/v3 inputs migrate to v4. This is the only implemented project file format. |
+| Native RVT read/write | Not implemented | No Revit parser, Revit runtime, AppBundle, APS job or RVT exporter exists. |
 
-### E. Structural engineering
+## E. Interoperability, cloud and Autodesk integrations
 
-| Feature | Status | Notes |
+| Feature | Status | Current boundary |
 | --- | --- | --- |
-| All items (foundations, framing, trusses, reinforcement, analytical model, loads, analysis) | [N] | M7. Engineering calculations will be labelled as unverified until implemented and validated. |
+| IFC/DXF/PDF/BCF/CSV/XLSX/GLB import/export | Not implemented | App JSON only. Any future format needs a declared subset and conversion/round-trip tests. |
+| Linked models, clash detection, issues, project collaboration | Not implemented | No backend or cloud collaboration layer exists. |
+| APS Model Derivative / Autodesk Viewer | Optional research only | See [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md). A translated RVT could be displayed/extracted in an isolated read-only prototype; this does not create editable app-native BIM elements. **No-go for integration now.** |
+| Revit API / Revit Automation API | Not implemented | Revit API is .NET and must run in a supported Revit context. A future server-side Automation AppBundle would be a separate approved integration, not frontend TypeScript. |
 
-### F. MEP systems
+## Scope boundaries
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| All items (ducts, pipes, fixtures, electrical, circuits, connectors, calculations) | [N] | M8. |
+- Keep integer millimetres in the semantic model; convert only at explicit format/API boundaries.
+- Keep model state authoritative, and preserve current editing, undo/redo, JSON save/open, autosave and Three.js workflows.
+- Do not treat imported geometry, derivative object IDs, pixels or mesh names as editable native elements without an explicit, validated importer.
+- Never imply that this application edits RVT or is Revit-compatible unless native RVT read/write is separately implemented and tested.
+- No APS dependency, credentials, customer-model upload or paid Autodesk service is introduced by the current change.
+- Keep clean-room implementation practices; use public API/specification documentation, not extracted proprietary code/assets.
 
-### G. Documentation and sheets
+## Definition of done
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| All items (sheets, title blocks, viewports, legends, revisions, print sets, PDF output) | [N] | M4/M5. |
-
-### H. Schedules, quantities and costing
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Schedules (room/door/window/element/material) | [N] | M5. |
-| Filters, sorting, grouping, calculated fields | [N] | M5. |
-| Quantities (area, length, volume, count, weight) | [N] | Computation lands with M3 (rooms/floors) and grows in M5. |
-| Material take-offs, BOQ, pricing, waste, cost summaries | [N] | M5. |
-| CSV/XLSX export | [N] | M5. |
-| Automatic updates on model change | [N] | With schedule implementation. |
-
-### I. Model coordination and validation
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Geometry and relationship validation | [V] | `src/model/validation.ts` (errors + warnings), enforced on every command and on load. |
-| Model warnings and issue tracking | [P] | Issue records exist; no UI tracker yet (M2 status area / M9). |
-| Linked models, clash detection, clearance checks, duplicate detection, revision comparison, comments, IFC, BCF | [N] | M9. |
-
-### J. Rendering and presentation
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Basic materials and lighting | [P] | Solid materials + ambient/directional light [V]; no textures. |
-| Lighting and shadows, sun/location, cameras, walkthroughs, exploded views, realistic style, image export, shareable viewing | [N] | M10. Rendering stays separate from the model. |
-
-### K. Cloud projects and collaboration
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| All items (accounts, orgs, permissions, cloud save, versioning, concurrent editing, worksets, audit) | [N] | M11. Existing backend audit required first; no backend exists in this repository (browser-local storage only). No infrastructure changes without approval. |
-
-### L. Interoperability and extensibility
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Project JSON save/open + migrations | [V] | `src/model/schema.ts` with v1→v2 migration. |
-| DXF, PDF, IFC, BCF, CSV/XLSX, GLB, extension API | [N] | M4 (PDF/DXF), M5 (CSV/XLSX), M9 (IFC/BCF), M10 (GLB), M12 (extension API). RVT is a separate research project and is not promised. |
-
-## 3. Scope boundaries
-
-- Integer millimetres remain the stored unit (README, `src/model/units.ts`).
-- No code, formats or assets derived from Autodesk products (clean-room policy, README).
-- Structural adequacy and code compliance will never be claimed without validated calculations (master prompt §12).
-- No backend/infrastructure changes in this repository without need + approval.
-
-## 4. Definition of done (applies to every feature)
-
-A feature is complete only when its workflow exists in the application, the model represents it, geometry is generated and validated, views update, parameters edit and persist, undo/redo and save/reopen work, errors are explicit, tests cover the behaviour, and documentation records remaining limitations.
+Every feature needs an end-user workflow, a canonical semantic representation, whole-model validation, derived geometry/view behavior where applicable, editing and error handling, undo/redo and save/reopen coverage, migration coverage for schema changes, tests, and documentation of remaining limits. External-format integrations additionally need explicit mapping/identity rules and fixtures. Native RVT claims additionally require a Revit/Automation runtime test; a browser render alone is insufficient.

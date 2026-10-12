@@ -23,6 +23,7 @@ interface PropertiesPanelProps {
   selection: Selection;
   onWallPatch(wallId: string, patch: Partial<Pick<Wall, "levelId" | "wallTypeId" | "height" | "start" | "end">>): void;
   onWallTypeThickness(wallTypeId: string, thickness: number): void;
+  onWallTypeMaterial(wallTypeId: string, materialId: string): void;
   onOpeningPatch(openingId: string, patch: Partial<Pick<Opening, "offset" | "openingTypeId">>): void;
   onFloorPatch(floorId: string, patch: Partial<Pick<Floor, "levelId" | "floorTypeId">>): void;
   onRoomPatch(roomId: string, patch: Partial<Pick<Room, "levelId" | "name" | "number">>): void;
@@ -126,6 +127,7 @@ function WallProperties({
   wall,
   onWallPatch,
   onWallTypeThickness,
+  onWallTypeMaterial,
   onDeleteSelection,
 }: PropertiesPanelProps & { wall: Wall }) {
   const type = wallTypeById(project, wall.wallTypeId);
@@ -158,6 +160,18 @@ function WallProperties({
             min={1}
             onCommit={(mm) => onWallTypeThickness(type.id, mm)}
           />
+        )}
+        {type && (
+          <label className="field">
+            <span>Type material (used by {sameType} wall(s))</span>
+            <select value={type.materialId} onChange={(e) => onWallTypeMaterial(type.id, e.target.value)}>
+              {project.materials.map((material) => (
+                <option key={material.id} value={material.id}>
+                  {material.name}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
         <NumberField
           label="Height (mm)"
