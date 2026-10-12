@@ -2,13 +2,17 @@ import * as THREE from "three";
 import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { clipSolid, PLAN_CUT_HEIGHT_MM, projectGeometry, type OpeningVoid, type Solid } from "../geometry/wallSolids";
+import { ceilingSlabs, columnSolids, floorSlabs, roomFaces, roofSolids, type CeilingSlab, type FloorSlab, type RoomFace, type RoofSolid } from "../geometry/elementGeometry";
 import { snapPoint } from "../model/geometry";
-import { levelById } from "../model/project";
-import type { Point, Project } from "../model/types";
+import { levelById, materialById } from "../model/project";
+import type { Point, Polygon, Project } from "../model/types";
 
 export type ViewMode = "plan" | "3d";
-export type Tool = "select" | "wall" | "door" | "window";
-export type Selection = { kind: "wall" | "opening"; id: string } | null;
+export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column" | "ceiling" | "roof";
+export type Selection =
+  | { kind: "wall" | "opening" | "floor" | "room" | "column" | "ceiling" | "roof"; id: string }
+  | null;
+export type VisualStyle = "shaded" | "hiddenLine" | "wireframe";
 
 export interface SceneHandlers {
   /** A click on the active level's plane, snapped to the snap step (integer mm). */
@@ -39,12 +43,30 @@ const COLOR = {
   doorLeaf: 0x9b6b3c,
   glass: 0x7fd4ff,
   preview: 0x34c3ff,
+  roomFill: 0x34c3ff,
+  roomSelected: 0xffb020,
 };
 
 interface PickUserData {
   wallId?: string;
   openingId?: string;
+  floorId?: string;
+  roomId?: string;
+  columnId?: string;
+  ceilingId?: string;
+  roofId?: string;
 }
+
+/** Pick priority when several meshes overlap under the pointer: lower wins. */
+const PICK_PRIORITY: Record<string, number> = {
+  openingId: 0,
+  columnId: 1,
+  wallId: 2,
+  roofId: 3,
+  floorId: 4,
+  ceilingId: 5,
+  roomId: 6,
+};
 
 /**
  * Owns the Three.js scene. It renders derived geometry (see src/geometry) in two views of the same
@@ -62,8 +84,11 @@ export class BimScene {
   private readonly modelGroup = new THREE.Group();
   private readonly pickGroup = new THREE.Group();
   private readonly previewGroup = new THREE.Group();
+  private readonly labelGroup = new THREE.Group();
   private readonly resizeObserver: ResizeObserver;
   private readonly materials: Record<string, THREE.Material>;
+  /** Cache of colour materials keyed by "#rrggbb", rebuilt never; disposed with the scene. */
+  private readonly colorMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
   private project: Project | null = null;
   private activeLevelId: string | null = null;
@@ -71,6 +96,9 @@ export class BimScene {
   private view: ViewMode = "plan";
   private tool: Tool = "select";
   private snapStep = 100;
+  /** Paper-scale denominator (e.g. 100 = 1:100). Room labels scale with it. */
+  private annotationScale = 100;
+  private detailLevel: "Coarse" | "Medium" | "Fine" = "Medium";
   private handlers: SceneHandlers;
   private pressAt: { x: number; y: number } | null = null;
   private disposed = false;
@@ -81,6 +109,8 @@ export class BimScene {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x1b1f27);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.renderer.domElement);
 
     this.planCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 500);
@@ -120,14 +150,34 @@ export class BimScene {
       }),
       pick: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
       preview: new THREE.LineBasicMaterial({ color: COLOR.preview }),
+      roomFill: new THREE.MeshBasicMaterial({
+        color: COLOR.roomFill,
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+      roomSelected: new THREE.MeshBasicMaterial({
+        color: COLOR.roomSelected,
+        transparent: true,
+        opacity: 0.25,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
     };
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const sun = new THREE.DirectionalLight(0xffffff, 0.8);
     sun.position.set(12, 25, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.left = -40;
+    sun.shadow.camera.right = 40;
+    sun.shadow.camera.top = 40;
+    sun.shadow.camera.bottom = -40;
     this.scene.add(sun);
     this.scene.add(new THREE.GridHelper(200, 200, 0x3a4150, 0x2a2f3a));
-    this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup);
+    this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup, this.labelGroup);
 
     const canvas = this.renderer.domElement;
     canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -166,6 +216,71 @@ export class BimScene {
     this.snapStep = step;
   }
 
+  /** Shaded (default), hidden-line (flat colours) or wireframe. Applies to every model material. */
+  setVisualStyle(style: VisualStyle): void {
+    const wire = style === "wireframe";
+    for (const material of [...Object.values(this.materials), ...this.colorMaterials.values()]) {
+      if ("wireframe" in material) {
+        (material as THREE.MeshStandardMaterial).wireframe = wire;
+        (material as THREE.MeshStandardMaterial).flatShading = style === "hiddenLine";
+        material.needsUpdate = true;
+      }
+    }
+    this.renderer.setClearColor(style === "hiddenLine" ? 0xf2f3f5 : 0x1b1f27);
+  }
+
+  setShadows(on: boolean): void {
+    this.renderer.shadowMap.enabled = on;
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.DirectionalLight) {
+        obj.castShadow = on;
+      }
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = on;
+        obj.receiveShadow = on;
+      }
+    });
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** Sets the annotation scale (paper denominator). Room labels grow with it. */
+  setAnnotationScale(scale: number): void {
+    this.annotationScale = scale;
+    this.rebuild();
+  }
+
+  /** Detail level. Coarse hides room labels; Medium and Fine keep them. */
+  setDetailLevel(detail: "Coarse" | "Medium" | "Fine"): void {
+    this.detailLevel = detail;
+    this.rebuild();
+  }
+
+  /** Resets the camera of the active view to its default framing. */
+  resetCamera(): void {
+    if (this.view === "plan") {
+      this.planControls.target.set(0, 0, 0);
+      this.planCamera.position.set(0, 80, 0);
+      this.planCamera.lookAt(0, 0, 0);
+    } else {
+      this.orbitControls.target.set(0, 1, 0);
+      this.perspCamera.position.set(18, 16, 18);
+      this.perspCamera.lookAt(0, 1, 0);
+    }
+    this.activeControls().update();
+  }
+
+  /** Pans the plan camera so `point` sits at the centre of the view. */
+  focusPlanPoint(point: Point): void {
+    const world = planToWorld(point, this.activeElevationM());
+    this.planControls.target.set(world.x, 0, world.z);
+    this.planCamera.position.set(world.x, 80, world.z);
+    this.planCamera.lookAt(world.x, 0, world.z);
+    if (this.view === "3d") {
+      this.orbitControls.target.set(world.x, 0, world.z);
+    }
+    this.activeControls().update();
+  }
+
   setProject(project: Project): void {
     this.project = project;
     this.rebuild();
@@ -188,6 +303,26 @@ export class BimScene {
     const y = this.activeElevationM() + 0.02;
     const geometry = new THREE.BufferGeometry().setFromPoints([planToWorld(start, y), planToWorld(end, y)]);
     this.previewGroup.add(new THREE.Line(geometry, this.materials.preview));
+  }
+
+  /** Draws a polygon-chain preview: the fixed vertices, a rubber band to `cursor`, and a closing band to the start. */
+  setPolygonPreview(points: Point[] | null, cursor: Point | null): void {
+    this.clearPreview();
+    if (!points || points.length === 0) return;
+    const y = this.activeElevationM() + 0.02;
+    const at = (p: Point) => planToWorld(p, y);
+    const vertices = points.map(at);
+    if (cursor) vertices.push(at(cursor));
+    if (vertices.length >= 2) {
+      this.previewGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(vertices), this.materials.preview));
+    }
+    // Ghost of the closing edge back to the first point.
+    if (cursor && points.length >= 2) {
+      const closing = new THREE.BufferGeometry().setFromPoints([at(cursor), at(points[0])]);
+      const dashed = new THREE.Line(closing, this.materials.preview);
+      dashed.computeLineDistances();
+      this.previewGroup.add(dashed);
+    }
   }
 
   /** Screen position (CSS pixels within the canvas) of a plan point on the active level. */
@@ -223,8 +358,11 @@ export class BimScene {
     this.orbitControls.dispose();
     this.clearGroup(this.modelGroup);
     this.clearGroup(this.pickGroup);
+    this.clearGroup(this.labelGroup);
     this.clearPreview();
     Object.values(this.materials).forEach((m) => m.dispose());
+    this.colorMaterials.forEach((m) => m.dispose());
+    this.colorMaterials.clear();
     this.renderer.dispose();
     canvas.remove();
   }
@@ -274,11 +412,16 @@ export class BimScene {
   private rebuild(): void {
     this.clearGroup(this.modelGroup);
     this.clearGroup(this.pickGroup);
+    this.clearGroup(this.labelGroup);
     if (!this.project || !this.activeLevelId) return;
     const project = this.project;
     const active = levelById(project, this.activeLevelId);
     if (!active) return;
-    const visible = new Set(project.levels.filter((l) => l.elevation <= active.elevation).map((l) => l.id));
+    // Plan acts like a level view: lower levels show as underlay. The 3D view shows the whole model.
+    const visible =
+      this.view === "plan"
+        ? new Set(project.levels.filter((l) => l.elevation <= active.elevation).map((l) => l.id))
+        : new Set(project.levels.map((l) => l.id));
     const { solids, voids } = projectGeometry(project, visible, this.activeLevelId);
     // In plan, walls are cut at the view-range height, so openings are visible as gaps.
     const cut = this.view === "plan" ? active.elevation + PLAN_CUT_HEIGHT_MM : Infinity;
@@ -287,6 +430,11 @@ export class BimScene {
 
     const selectedWallId = this.selection?.kind === "wall" ? this.selection.id : null;
     const selectedOpeningId = this.selection?.kind === "opening" ? this.selection.id : null;
+    const selectedFloorId = this.selection?.kind === "floor" ? this.selection.id : null;
+    const selectedRoomId = this.selection?.kind === "room" ? this.selection.id : null;
+    const selectedColumnId = this.selection?.kind === "column" ? this.selection.id : null;
+    const selectedCeilingId = this.selection?.kind === "ceiling" ? this.selection.id : null;
+    const selectedRoofId = this.selection?.kind === "roof" ? this.selection.id : null;
     const levelOfWall = new Map(project.walls.map((w) => [w.id, w.levelId]));
 
     for (const solid of clippedSolids) {
@@ -295,6 +443,57 @@ export class BimScene {
       this.addSolid(this.modelGroup, solid, material, { wallId: solid.wallId, openingId: solid.openingId });
     }
     for (const v of clippedVoids) this.addVoid(v);
+    for (const slab of floorSlabs(project, visible)) {
+      this.addFloorSlab(slab, slab.floorId === selectedFloorId);
+    }
+    for (const ceiling of ceilingSlabs(project, visible)) {
+      this.addCeilingSlab(ceiling, ceiling.ceilingId === selectedCeilingId);
+    }
+    for (const roof of roofSolids(project, visible)) {
+      this.addRoofMesh(roof, roof.roofId === selectedRoofId);
+    }
+    for (const c of columnSolids(project, visible)) {
+      const material =
+        c.columnId === selectedColumnId
+          ? this.materials.selected
+          : this.materialForColor(this.typeMaterialColor(c.materialId), COLOR.wall);
+      this.addSolid(
+        this.modelGroup,
+        {
+          role: "wall",
+          wallId: "",
+          centre: c.centre,
+          axis: { x: 1, y: 0 },
+          length: c.width,
+          thickness: c.depth,
+          z0: c.z0,
+          z1: c.z1,
+        },
+        material,
+        { columnId: c.columnId },
+      );
+    }
+    // Rooms are plan annotations: a translucent fill and a label, never 3D geometry.
+    if (this.view === "plan") {
+      for (const face of roomFaces(project, visible)) {
+        this.addRoomFace(face, face.roomId === selectedRoomId, this.detailLevel !== "Coarse");
+      }
+    }
+  }
+
+  /** Material for a stored colour string, created once and shared. */
+  private materialForColor(color: string | undefined, fallback: number): THREE.Material {
+    const hex = color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : `#${fallback.toString(16).padStart(6, "0")}`;
+    let material = this.colorMaterials.get(hex);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.85 });
+      this.colorMaterials.set(hex, material);
+    }
+    return material;
+  }
+
+  private typeMaterialColor(materialId: string | undefined): string | undefined {
+    return materialId && this.project ? materialById(this.project, materialId)?.color : undefined;
   }
 
   private materialFor(
@@ -339,11 +538,145 @@ export class BimScene {
     this.addSolid(this.pickGroup, s, this.materials.pick, { wallId: v.wallId, openingId: v.openingId });
   }
 
+  /** Extrudes a floor slab from its boundary polygon. The top face is at the level elevation. */
+  private addFloorSlab(slab: FloorSlab, selected: boolean): void {
+    const material = selected ? this.materials.selected : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
+    const mesh = this.addSlabMesh(slab.boundary, slab.z0, slab.z1, material);
+    mesh.userData = { floorId: slab.floorId };
+  }
+
+  /** A ceiling panel: the same polygon slab, positioned by its height above the level. */
+  private addCeilingSlab(slab: CeilingSlab, selected: boolean): void {
+    const material = selected
+      ? this.materials.selected
+      : this.materialForColor(this.typeMaterialColor(slab.materialId), COLOR.wall);
+    const mesh = this.addSlabMesh(slab.boundary, slab.z0, slab.z1, material);
+    mesh.userData = { ceilingId: slab.ceilingId };
+  }
+
+  /** Extrudes a boundary polygon between elevations z0..z1 and adds it to the model group. */
+  private addSlabMesh(boundary: Polygon, z0: number, z1: number, material: THREE.Material): THREE.Mesh {
+    const shape = new THREE.Shape(boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const depth = (z1 - z0) * MM_TO_SCENE;
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
+    // Shape (x, -y) is rotated so the extrusion runs along world +Y and plan y maps to -z.
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = z0 * MM_TO_SCENE;
+    this.modelGroup.add(mesh);
+    return mesh;
+  }
+
+  /**
+   * A hip roof: two trapezoid slopes, two hip ends and a flat soffit closing the volume. Built
+   * directly in world coordinates from the derived footprint and ridge.
+   */
+  private addRoofMesh(roof: RoofSolid, selected: boolean): void {
+    const at = (x: number, y: number, z: number) => new THREE.Vector3(x * MM_TO_SCENE, z * MM_TO_SCENE, -y * MM_TO_SCENE);
+    const c1 = at(roof.minX, roof.minY, roof.z0);
+    const c2 = at(roof.maxX, roof.minY, roof.z0);
+    const c3 = at(roof.maxX, roof.maxY, roof.z0);
+    const c4 = at(roof.minX, roof.maxY, roof.z0);
+    const r1 = at(roof.ridgeA.x, roof.ridgeA.y, roof.z1);
+    const r2 = at(roof.ridgeB.x, roof.ridgeB.y, roof.z1);
+    const positions: number[] = [];
+    const push = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => {
+      positions.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+    };
+    // Sides and hips (each quad as two triangles; DoubleSide material keeps winding harmless).
+    push(c1, r1, r2);
+    push(c1, r2, c2);
+    push(c3, r2, r1);
+    push(c3, r1, c4);
+    push(c2, r2, c3);
+    push(c4, r1, c1);
+    // Soffit closes the volume.
+    push(c1, c2, c3);
+    push(c1, c3, c4);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const base = selected
+      ? this.materials.selected
+      : this.materialForColor(this.typeMaterialColor(roof.materialId), COLOR.wall);
+    // Roofs use a DoubleSide variant of the base colour so sloped faces always shade correctly.
+    const material = this.doubleSideFor(base);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { roofId: roof.roofId };
+    this.modelGroup.add(mesh);
+  }
+
+  /** DoubleSide twin of a material, cached alongside the colour materials. */
+  private doubleSideFor(base: THREE.Material): THREE.Material {
+    const key = `//double//${base.uuid}`;
+    let material = this.colorMaterials.get(key);
+    if (!material) {
+      const source = base as THREE.MeshStandardMaterial;
+      material = new THREE.MeshStandardMaterial({
+        color: source.color ? source.color.clone() : new THREE.Color(COLOR.wall),
+        roughness: source.roughness ?? 0.85,
+        side: THREE.DoubleSide,
+        flatShading: source.flatShading ?? false,
+      });
+      this.colorMaterials.set(key, material);
+    }
+    return material;
+  }
+
+  /** Plan-only room fill and a canvas-texture label showing name and derived area. */
+  private addRoomFace(face: RoomFace, selected: boolean, withLabel: boolean): void {
+    const shape = new THREE.Shape(face.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const geometry = new THREE.ShapeGeometry(shape);
+    const mesh = new THREE.Mesh(geometry, selected ? this.materials.roomSelected : this.materials.roomFill);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = face.z * MM_TO_SCENE + 0.01;
+    mesh.userData = { roomId: face.roomId };
+    this.modelGroup.add(mesh);
+
+    const room = this.project?.rooms.find((r) => r.id === face.roomId);
+    if (room && withLabel) {
+      const areaM2 = (face.areaMm2 / 1e6).toFixed(2);
+      const sprite = this.labelSprite(`${room.name}\n${areaM2} m²`);
+      sprite.position.copy(planToWorld(face.labelPoint, face.z * MM_TO_SCENE + 0.05));
+      sprite.userData = { roomId: face.roomId };
+      this.labelGroup.add(sprite);
+    }
+  }
+
+  /** A text sprite drawn on a canvas texture; shared style, disposed with the scene. */
+  private labelSprite(text: string): THREE.Sprite {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d")!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "rgba(20, 24, 32, 0.75)";
+    ctx.beginPath();
+    ctx.roundRect(8, 24, 240, 80, 12);
+    ctx.fill();
+    ctx.fillStyle = "#e6e9ef";
+    ctx.font = "600 28px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    const lines = text.split("\n");
+    lines.forEach((line, i) => ctx.fillText(line, 128, 56 + i * 34, 224));
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    // Label size follows the annotation scale: 1:100 is the base size.
+    const k = this.annotationScale / 100;
+    sprite.scale.set(2.4 * k, 1.2 * k, 1);
+    return sprite;
+  }
+
   /** Removes meshes from a group and frees their geometry. Materials are shared and kept. */
   private clearGroup(group: THREE.Group): void {
     for (const child of [...group.children]) {
       group.remove(child);
       if (child instanceof THREE.Mesh) child.geometry.dispose();
+      if (child instanceof THREE.Sprite) {
+        child.material.map?.dispose();
+        child.material.dispose();
+      }
     }
   }
 
@@ -395,16 +728,47 @@ export class BimScene {
     if (point) this.handlers.onPlanMove(point);
   };
 
-  /** Openings first (they sit inside walls), then walls. */
+  /**
+   * Picks under the pointer. Openings win over walls; among overlapping elements the pick priority
+   * list decides, so flat plan fills do not steal clicks.
+   */
   private pickAt(event: PointerEvent): Selection {
     this.setPointerFromEvent(event);
-    const openingHit = this.raycaster.intersectObjects(this.pickGroup.children, false)[0];
-    const openingId = openingHit?.object.userData.openingId as string | undefined;
-    if (openingId) return { kind: "opening", id: openingId };
-    const wallHit = this.raycaster.intersectObjects(this.modelGroup.children, false)[0];
-    const data = wallHit?.object.userData as PickUserData | undefined;
-    if (data?.openingId) return { kind: "opening", id: data.openingId };
-    if (data?.wallId) return { kind: "wall", id: data.wallId };
-    return null;
+    const objects = [...this.pickGroup.children, ...this.modelGroup.children, ...this.labelGroup.children];
+    const hits = this.raycaster.intersectObjects(objects, false);
+    let best: Selection = null;
+    let bestPriority = Infinity;
+    for (const hit of hits) {
+      const data = hit.object.userData as PickUserData;
+      const choice = selectionFromUserData(data);
+      if (!choice) continue;
+      const priority = PICK_PRIORITY[SELECTION_KEY[choice.kind]] ?? 99;
+      if (priority < bestPriority) {
+        best = choice;
+        bestPriority = priority;
+      }
+    }
+    return best;
   }
+}
+
+const SELECTION_KEY: Record<NonNullable<Selection>["kind"], keyof PickUserData> = {
+  wall: "wallId",
+  opening: "openingId",
+  floor: "floorId",
+  room: "roomId",
+  column: "columnId",
+  ceiling: "ceilingId",
+  roof: "roofId",
+};
+
+function selectionFromUserData(data: PickUserData): Selection {
+  if (data.openingId) return { kind: "opening", id: data.openingId };
+  if (data.columnId) return { kind: "column", id: data.columnId };
+  if (data.wallId) return { kind: "wall", id: data.wallId };
+  if (data.roofId) return { kind: "roof", id: data.roofId };
+  if (data.floorId) return { kind: "floor", id: data.floorId };
+  if (data.ceilingId) return { kind: "ceiling", id: data.ceilingId };
+  if (data.roomId) return { kind: "room", id: data.roomId };
+  return null;
 }

@@ -1,7 +1,27 @@
 import { newId } from "./ids";
 import { createProject } from "./project";
 import { firstError } from "./validation";
-import { SCHEMA_VERSION, type Level, type Opening, type OpeningType, type Point, type Project, type Wall, type WallType } from "./types";
+import {
+  SCHEMA_VERSION,
+  type Ceiling,
+  type CeilingType,
+  type Column,
+  type ColumnType,
+  type Floor,
+  type FloorType,
+  type Level,
+  type Material,
+  type Opening,
+  type OpeningType,
+  type Point,
+  type Polygon,
+  type Project,
+  type Roof,
+  type RoofType,
+  type Room,
+  type Wall,
+  type WallType,
+} from "./types";
 
 export const PROJECT_FORMAT = "revit-web/project" as const;
 
@@ -28,7 +48,9 @@ export function parseProject(text: string): Project {
 
   let project: Project;
   if (raw.schemaVersion === SCHEMA_VERSION) project = readCurrent(raw);
-  else if (raw.version === 1) project = migrateV1(raw);
+  else if (raw.schemaVersion === 3) project = migrateV3(raw);
+  else if (raw.schemaVersion === 2) project = migrateV2(raw);
+  else if (raw.version === 1) project = migrateV2(migrateV1ToV2(raw));
   else throw new Error(`Unsupported project version: ${String(raw.schemaVersion ?? raw.version)}.`);
 
   const message = firstError(project);
@@ -51,7 +73,207 @@ function readCurrent(raw: Record<string, unknown>): Project {
     const r = record(item, `Level ${i}`);
     return { id: str(r, "id"), name: str(r, "name"), elevation: int(r, "elevation") };
   });
+  const materials = array(raw, "materials").map((item, i): Material => {
+    const r = record(item, `Material ${i}`);
+    return { id: str(r, "id"), name: str(r, "name"), color: str(r, "color") };
+  });
   const wallTypes = array(raw, "wallTypes").map((item, i): WallType => {
+    const r = record(item, `Wall type ${i}`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      thickness: int(r, "thickness"),
+      materialId: str(r, "materialId"),
+    };
+  });
+  const floorTypes = array(raw, "floorTypes").map((item, i): FloorType => {
+    const r = record(item, `Floor type ${i}`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      thickness: int(r, "thickness"),
+      materialId: str(r, "materialId"),
+    };
+  });
+  const columnTypes = array(raw, "columnTypes").map((item, i): ColumnType => {
+    const r = record(item, `Column type ${i}`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      width: int(r, "width"),
+      depth: int(r, "depth"),
+      materialId: str(r, "materialId"),
+    };
+  });
+  const ceilingTypes = array(raw, "ceilingTypes").map((item, i): CeilingType => {
+    const r = record(item, `Ceiling type ${i}`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      thickness: int(r, "thickness"),
+      materialId: str(r, "materialId"),
+    };
+  });
+  const roofTypes = array(raw, "roofTypes").map((item, i): RoofType => {
+    const r = record(item, `Roof type ${i}`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      thickness: int(r, "thickness"),
+      materialId: str(r, "materialId"),
+    };
+  });
+  const openingTypes = array(raw, "openingTypes").map((item, i): OpeningType => {
+    const r = record(item, `Opening type ${i}`);
+    const kind = str(r, "kind");
+    if (kind !== "door" && kind !== "window") throw new Error(`Opening type ${i} has an unknown kind.`);
+    return {
+      id: str(r, "id"),
+      name: str(r, "name"),
+      kind,
+      width: int(r, "width"),
+      height: int(r, "height"),
+      sillHeight: int(r, "sillHeight"),
+    };
+  });
+  const walls = array(raw, "walls").map((item, i): Wall => {
+    const r = record(item, `Wall ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      wallTypeId: str(r, "wallTypeId"),
+      start: point(r, "start"),
+      end: point(r, "end"),
+      height: int(r, "height"),
+    };
+  });
+  const openings = array(raw, "openings").map((item, i): Opening => {
+    const r = record(item, `Opening ${i}`);
+    return {
+      id: str(r, "id"),
+      hostWallId: str(r, "hostWallId"),
+      openingTypeId: str(r, "openingTypeId"),
+      offset: int(r, "offset"),
+    };
+  });
+  const floors = array(raw, "floors").map((item, i): Floor => {
+    const r = record(item, `Floor ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      floorTypeId: str(r, "floorTypeId"),
+      boundary: polygon(r, "boundary"),
+    };
+  });
+  const rooms = array(raw, "rooms").map((item, i): Room => {
+    const r = record(item, `Room ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      name: str(r, "name"),
+      number: str(r, "number"),
+      boundary: polygon(r, "boundary"),
+    };
+  });
+  const columns = array(raw, "columns").map((item, i): Column => {
+    const r = record(item, `Column ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      columnTypeId: str(r, "columnTypeId"),
+      position: point(r, "position"),
+      height: int(r, "height"),
+    };
+  });
+  const ceilings = array(raw, "ceilings").map((item, i): Ceiling => {
+    const r = record(item, `Ceiling ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      ceilingTypeId: str(r, "ceilingTypeId"),
+      boundary: polygon(r, "boundary"),
+      height: int(r, "height"),
+    };
+  });
+  const roofs = array(raw, "roofs").map((item, i): Roof => {
+    const r = record(item, `Roof ${i}`);
+    return {
+      id: str(r, "id"),
+      levelId: str(r, "levelId"),
+      roofTypeId: str(r, "roofTypeId"),
+      boundary: polygon(r, "boundary"),
+      overhang: int(r, "overhang"),
+      rise: int(r, "rise"),
+    };
+  });
+  const units = record(raw.units, "Units");
+  if (units.length !== "mm") throw new Error("Project length unit must be millimetres.");
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    id: str(raw, "id"),
+    name: str(raw, "name"),
+    units: { length: "mm" },
+    revision: int(raw, "revision"),
+    levels,
+    materials,
+    wallTypes,
+    floorTypes,
+    columnTypes,
+    ceilingTypes,
+    roofTypes,
+    openingTypes,
+    walls,
+    openings,
+    floors,
+    rooms,
+    columns,
+    ceilings,
+    roofs,
+  };
+}
+
+/**
+ * Migrates schema v3 to v4 (DECISIONS.md D10): seeds one ceiling type and one roof type whose
+ * material is the file's first material, and starts the ceiling and roof collections empty.
+ */
+function migrateV3(raw: Record<string, unknown>): Project {
+  const materials = array(raw, "materials");
+  const first = materials.length > 0 ? record(materials[0], "Material 0") : null;
+  const materialId = first ? str(first, "id") : newId("mat");
+  const base = createProject(typeof raw.name === "string" ? raw.name : "Untitled project");
+  const injected: Record<string, unknown> = {
+    ...raw,
+    schemaVersion: SCHEMA_VERSION,
+    ceilingTypes: raw.ceilingTypes ?? base.ceilingTypes.map((t) => ({ ...t, materialId })),
+    roofTypes: raw.roofTypes ?? base.roofTypes.map((t) => ({ ...t, materialId })),
+    ceilings: raw.ceilings ?? [],
+    roofs: raw.roofs ?? [],
+  };
+  return readCurrent(injected);
+}
+
+/** The v2 shape: no materials, floors, rooms or columns; wall types have no material. */
+interface ProjectV2 {
+  id: string;
+  name: string;
+  revision: number;
+  levels: Level[];
+  wallTypes: { id: string; name: string; thickness: number }[];
+  openingTypes: OpeningType[];
+  walls: Wall[];
+  openings: Opening[];
+}
+
+/**
+ * Migrates schema v2 to v3 (DECISIONS.md D7): seeds one generic material, assigns it to every wall
+ * type, and seeds one floor type and one column type. New element collections start empty.
+ */
+function migrateV2(raw: Record<string, unknown>): Project {
+  const levels = array(raw, "levels").map((item, i): Level => {
+    const r = record(item, `Level ${i}`);
+    return { id: str(r, "id"), name: str(r, "name"), elevation: int(r, "elevation") };
+  });
+  const wallTypes: ProjectV2["wallTypes"] = array(raw, "wallTypes").map((item, i) => {
     const r = record(item, `Wall type ${i}`);
     return { id: str(r, "id"), name: str(r, "name"), thickness: int(r, "thickness") };
   });
@@ -90,11 +312,9 @@ function readCurrent(raw: Record<string, unknown>): Project {
   });
   const units = record(raw.units, "Units");
   if (units.length !== "mm") throw new Error("Project length unit must be millimetres.");
-  return {
-    schemaVersion: SCHEMA_VERSION,
+  const v2: ProjectV2 = {
     id: str(raw, "id"),
     name: str(raw, "name"),
-    units: { length: "mm" },
     revision: int(raw, "revision"),
     levels,
     wallTypes,
@@ -102,19 +322,50 @@ function readCurrent(raw: Record<string, unknown>): Project {
     walls,
     openings,
   };
+  return v2ToV3(v2);
+}
+
+function v2ToV3(v2: ProjectV2): Project {
+  const base = createProject(v2.name);
+  const material: Material = { id: newId("mat"), name: "Generic", color: "#b0a89a" };
+  const wallTypes: WallType[] =
+    v2.wallTypes.length > 0
+      ? v2.wallTypes.map((t) => ({ ...t, materialId: material.id }))
+      : base.wallTypes.map((t) => ({ ...t, materialId: material.id }));
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    id: v2.id,
+    name: v2.name,
+    units: { length: "mm" },
+    revision: v2.revision,
+    levels: v2.levels,
+    materials: [material],
+    wallTypes,
+    floorTypes: base.floorTypes.map((t) => ({ ...t, materialId: material.id })),
+    columnTypes: base.columnTypes.map((t) => ({ ...t, materialId: material.id })),
+    ceilingTypes: base.ceilingTypes.map((t) => ({ ...t, materialId: material.id })),
+    roofTypes: base.roofTypes.map((t) => ({ ...t, materialId: material.id })),
+    openingTypes: v2.openingTypes,
+    walls: v2.walls,
+    openings: v2.openings,
+    floors: [],
+    rooms: [],
+    columns: [],
+    ceilings: [],
+    roofs: [],
+  };
 }
 
 /**
- * Migrates the first format (metres as floats, no types or openings). Lengths are rounded to whole
- * millimetres, and each distinct thickness becomes a wall type.
+ * Migrates the first format (metres as floats, no types or openings) to the v2 shape. Lengths are
+ * rounded to whole millimetres, and each distinct thickness becomes a wall type.
  */
-function migrateV1(raw: Record<string, unknown>): Project {
+function migrateV1ToV2(raw: Record<string, unknown>): Record<string, unknown> {
   const toMm = (value: unknown, label: string): number => {
     if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${label} must be a number.`);
     return Math.round(value * 1000);
   };
-  const base = createProject(typeof raw.name === "string" ? raw.name : "Untitled project");
-  const wallTypes: WallType[] = [];
+  const wallTypes: { id: string; name: string; thickness: number }[] = [];
   const typeByThickness = new Map<number, string>();
   const typeFor = (thickness: number): string => {
     const existing = typeByThickness.get(thickness);
@@ -142,12 +393,15 @@ function migrateV1(raw: Record<string, unknown>): Project {
       height: toMm(r.height, `Wall ${i} height`),
     };
   });
-  if (wallTypes.length === 0) wallTypes.push(...base.wallTypes.slice(0, 1));
   return {
-    ...base,
-    name: typeof raw.name === "string" ? raw.name : base.name,
+    schemaVersion: 2,
+    id: typeof raw.id === "string" ? raw.id : newId("proj"),
+    name: typeof raw.name === "string" ? raw.name : "Untitled project",
+    units: { length: "mm" },
+    revision: typeof raw.revision === "number" && Number.isSafeInteger(raw.revision) ? raw.revision : 0,
     levels,
     wallTypes,
+    openingTypes: [],
     walls,
     openings: [],
   };
@@ -185,4 +439,11 @@ function int(r: Record<string, unknown>, key: string): number {
 function point(r: Record<string, unknown>, key: string): Point {
   const p = record(r[key], `Field "${key}"`);
   return { x: int(p, "x"), y: int(p, "y") };
+}
+
+function polygon(r: Record<string, unknown>, key: string): Polygon {
+  return array(r, key).map((item, i) => {
+    const p = record(item, `${key}[${i}]`);
+    return { x: int(p, "x"), y: int(p, "y") };
+  });
 }

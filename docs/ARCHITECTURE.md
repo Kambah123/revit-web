@@ -41,13 +41,15 @@ Baseline results (measured before changes):
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Canonical model | `src/model/` | Typed entities, integer-mm units, schema, validation, commands |
+| Canonical model | `src/model/` | Typed entities, integer-mm units, schema v3, validation, commands |
 | Derived topology | `src/model/joins.ts`, `src/model/queries.ts` | Wall joins and lookups, computed from the model, never stored |
-| Derived geometry | `src/geometry/` | Solids for walls with openings cut, door leaves, and glass; pure functions |
-| Rendering | `src/viewer/` | Three.js scene: plan (orthographic) and 3D (perspective) views of derived geometry |
+| Derived geometry | `src/geometry/` | Wall solids with openings cut; polygon helpers; floor/column/room geometry; pure functions |
+| Derived quantities | `src/model/quantities.ts` | Areas, volumes, counts — always computed, never stored |
+| Rendering | `src/viewer/` | Three.js scene: plan and 3D views of derived geometry, visual styles, shadows, labels |
 | Editing state | `src/app/history.ts` | Undo/redo over immutable project snapshots |
-| Persistence | `src/model/schema.ts`, `src/persistence/` | JSON save/open with migration; autosave to local storage with recovery |
-| UI | `src/App.tsx`, `src/ui/` | Toolbar, levels, properties; commands only through the model layer |
+| Persistence | `src/model/schema.ts`, `src/persistence/` | JSON save/open with v1/v2 migrations; autosave with recovery |
+| Command registry | `src/app/ribbon.ts` | Single source of truth for ribbon, command launcher and shortcuts; unimplemented commands declared as disabled |
+| UI | `src/App.tsx`, `src/ui/` | QAT, ribbon, view tabs, project browser, properties, view control bar, status bar, launcher; all edits via model commands |
 
 Principles:
 
@@ -60,12 +62,13 @@ Principles:
 
 Slices, in order. Each slice ends with tests and an end-to-end run.
 
-1. **Slice 1 (this change):** schema v2 in mm with migration; integer-mm validation; levels; connected walls with derived joins; wall types; hosted doors and windows that cut wall openings; plan and 3D views driven by the same derived geometry; properties; undo/redo; autosave and recovery; save/reopen; end-to-end browser test.
-2. **Slice 2:** floors, ceilings, roofs, columns, stairs, rooms with area, and material assignment.
-3. **Slice 3:** sections and elevations (orthographic cuts of the same derived geometry), view ranges, dimensions, and annotations.
-4. **Slice 4:** sheets, title blocks, PDF export at scale, DXF export of 2D entities, schedules from model data.
-5. **Slice 5:** grids, reference planes, editing tools (move, copy, rotate, mirror, array, trim, offset), command search.
-6. **Later, requires approval:** IFC import/export with a tested schema subset, structural and MEP systems, cloud persistence, and collaboration.
+1. **Slice 1 (done):** schema v2 in mm with migration; integer-mm validation; levels; connected walls with derived joins; wall types; hosted doors and windows that cut wall openings; plan and 3D views driven by the same derived geometry; properties; undo/redo; autosave and recovery; save/reopen; end-to-end browser test.
+2. **Slice 2 (done):** schema v3 — materials assigned to types; floors (boundary sketches), rooms (computed areas), columns; derived quantities; polygon drawing tools; properties editors.
+3. **Slice 3 (done):** professional workspace — ribbon with 11 tabs and a command registry, QAT, contextual ribbon, project browser, view tabs, view control bar (scale/detail/visual style/shadows), status bar, command launcher (Ctrl+K), shortcut map, resizable/collapsible panels.
+4. **Slice 4 (next):** ceilings and simple roofs with overhang (M3 finish); wall material assignment UI.
+5. **Slice 5:** sections and elevations generated from the model (orthographic cuts of the same derived geometry), view ranges, dimensions, and annotations (M4).
+6. **Slice 6:** sheets, title blocks, PDF export at scale, DXF export of 2D entities, schedules from model data (M4/M5).
+7. **Later, requires approval:** IFC import/export with a tested schema subset, structural and MEP systems, cloud persistence, and collaboration.
 
 ## 4. Slice 1 status
 
