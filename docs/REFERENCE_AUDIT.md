@@ -1,6 +1,6 @@
-# Reference audit
+# User-interface reference inventory
 
-Date: 2026-10-12. Session: `arena/63a6b55e-revit-web`.
+**Inventory date:** 2026-10-12. This file records the earlier UI-reference search and prompt-derived requirements; it is not the current feature-status or Autodesk API audit. See [`PRODUCT_SCOPE.md`](PRODUCT_SCOPE.md) for current implementation status and [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md) for the official Revit API/SDK and APS technical review.
 
 ## 1. Materials provided for this session
 
@@ -92,4 +92,4 @@ Contextual ribbon tabs (shown on selection): Modify | Walls, Modify | Doors, Mod
 
 ## 5. Branding
 
-The reference materials describe Autodesk Revit's UI. This project (working name **revit-web**, product identity **Atlas BIM** in UI copy where needed) is a clean-room implementation: no Autodesk logos, icons, names, file-format code or assets are used. Iconography and styling are original, geometrically simple, and drawn as inline SVG/CSS.
+The reference materials describe Autodesk Revit's UI. This project is an independent, clean-room implementation: it does not use Autodesk logos, proprietary icons, copied source code, extracted file-format code, or extracted assets. Any visual styling and iconography are original.

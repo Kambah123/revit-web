@@ -1,98 +1,59 @@
-# revit-web architecture and plan
+# Architecture
 
-## 1. Audit of commit ddec16a (baseline)
+**Verified:** 2026-10-12 (UTC), branch `arena/11b23c70-revit-web`. Historical slice-by-slice changes are recorded in [`PROGRESS.md`](PROGRESS.md); current scope is in [`PRODUCT_SCOPE.md`](PRODUCT_SCOPE.md).
 
-Repository state: branch `arena/6a8161ff-revit-web`, commits `b21fe69` (initial) and `ddec16a` (scaffold). The working tree was clean before this work.
+## Product boundary
 
-Baseline results (measured before changes):
+This is a browser BIM editor with an app-owned semantic model and native Three.js rendering. The current project file is versioned `revit-web` JSON, schema v4. It does not parse, edit, import or export RVT. Revit API and APS integration boundaries are audited separately in [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
-| Check | Result |
-| --- | --- |
-| `npx tsc --noEmit` | passes |
-| `npx vitest run` | 11 tests pass (model only) |
-| `npx vite build` | passes; chunk-size warning (three.js bundle ~0.5 MB) |
-| Headless browser smoke test | page loads, no console errors, one WebGL canvas |
-
-### What works in ddec16a
-
-- Create project, add/rename/delete levels, set level elevation.
-- Draw walls in the 3D view by clicking the ground plane with snapping and chaining.
-- Select a wall (click) and edit its level, height, thickness, start and end.
-- Delete a wall; save/open project JSON with validation.
-
-### What is missing or broken
-
-- **No plan view.** Walls are drawn by raycasting onto the ground in a perspective view. There is no orthographic 2D plan, so precise drawing is awkward. The baseline screenshot shows the 3D view is almost empty.
-- **No undo/redo, no autosave.** Every edit is final.
-- **No hosted elements.** Doors and windows do not exist.
-- **Walls are independent boxes.** Corners do not join; there is no wall type, no layers, and no join model.
-- **Floats in the model.** Lengths are stored in meters as floats, so repeated edits can accumulate error.
-- **Unstable identity.** IDs are random per session; no schema version beyond `version: 1`.
-- **No invariants enforced by commands.** Edits mutate state directly in React handlers and only validate inputs locally.
-- **Not implemented at all:** grids, reference planes, floors, roofs, ceilings, columns, stairs, rooms, families, views, sections, elevations, sheets, schedules, exports, IFC, structural/MEP, collaboration.
-- **Tests cover the model only.** No UI, geometry, or end-to-end tests.
-
-### Risks
-
-- Changing the schema (meters -> integer millimetres) requires a migration for files saved in the v1 format. A migration is included and tested.
-- Three.js rendering is the only geometry path. For walls with openings, straight boxes are sufficient; general solids (Open CASCADE/WASM) are deferred until a feature needs them.
-
-## 2. Architecture (target)
+## Architecture layers
 
 | Layer | Location | Responsibility |
 | --- | --- | --- |
-| Canonical model | `src/model/` | Typed entities, integer-mm units, schema v3, validation, commands |
-| Derived topology | `src/model/joins.ts`, `src/model/queries.ts` | Wall joins and lookups, computed from the model, never stored |
-| Derived geometry | `src/geometry/` | Wall solids with openings cut; polygon helpers; floor/column/room geometry; pure functions |
-| Derived quantities | `src/model/quantities.ts` | Areas, volumes, counts — always computed, never stored |
-| Rendering | `src/viewer/` | Three.js scene: plan and 3D views of derived geometry, visual styles, shadows, labels |
-| Editing state | `src/app/history.ts` | Undo/redo over immutable project snapshots |
-| Persistence | `src/model/schema.ts`, `src/persistence/` | JSON save/open with v1/v2 migrations; autosave with recovery |
-| Command registry | `src/app/ribbon.ts` | Single source of truth for ribbon, command launcher and shortcuts; unimplemented commands declared as disabled |
-| UI | `src/App.tsx`, `src/ui/` | QAT, ribbon, view tabs, project browser, properties, view control bar, status bar, launcher; all edits via model commands |
+| Canonical model | `src/model/types.ts`, `project.ts` | Schema v4; project, levels, display materials, types, instances, rooms and supported element fields. Lengths/elevations are integer mm. |
+| Invariants and edits | `src/model/validation.ts`, `commands.ts`, `geometry.ts`, `joins.ts`, `queries.ts` | Validate the whole project, immutable domain commands, polygon/math and derived relationships. Invalid command results are rejected before history commit. |
+| Serialization | `src/model/schema.ts` | Versioned JSON parse/serialize; v1/v2/v3 migrate to v4. No geometry mesh is persisted. |
+| Derived geometry | `src/geometry/` | Pure functions generate supported wall/opening, floor, room, column, ceiling and hip-roof shapes plus model-derived elevation projections. |
+| Derived quantities | `src/model/quantities.ts` | App-defined quantities from canonical values/geometries; not stored as authoritative inputs and not asserted to match Revit schedules. |
+| Rendering and picking | `src/viewer/BimScene.ts`, `src/ui/ElevationView.tsx` | Native Three.js plan/3D scene and generated read-only SVG elevations, pointer selection/editing, visual style and display colors. It renders app geometry, not an Autodesk derivative. |
+| History | `src/app/history.ts` | Immutable project snapshots for in-memory undo/redo. |
+| Browser persistence | `src/persistence/autosave.ts` | Single-slot localStorage autosave/recovery. File open/save use versioned app JSON. |
+| Command registry | `src/app/ribbon.ts` | One registry for ribbon, search launcher, shortcuts and enabled/disabled command state. |
+| UI and orchestration | `src/App.tsx`, `src/ui/` | Workspace and selection/tool state; runs domain commands and commits valid results to history. |
+| Tests | `src/__tests__/`, `e2e/` | Unit/integration regressions plus five Puppeteer browser suites, including elevation projection and UI workflows. |
 
-Principles:
+## Data and edit flow
 
-- Lengths are **integer millimetres** everywhere in the model. Display converts; input is parsed into integers.
-- Every model edit goes through a command in `src/model/commands.ts`, which validates the whole project before returning. Invalid edits throw and leave the state unchanged.
-- Geometry and render meshes are derived. They are never saved and never treated as authoritative.
-- Undo/redo stores whole project snapshots. Snapshots are immutable, so restoring one is exact.
+1. UI/scene interaction proposes a domain change (e.g. wall placement or property edit).
+2. `src/App.tsx` calls a command from `src/model/commands.ts` against the current `Project`.
+3. The command creates an immutable candidate, increments revision where appropriate and validates references/invariants. Failure leaves the previous project intact and reports a message.
+4. A successful candidate is committed to `historyReducer`; undo/redo restores snapshots.
+5. React passes the canonical `Project` to `BimScene` and, when an elevation tab is active, `ElevationView`. `src/geometry/` derives meshes/plan graphics and model-derived elevation projections; `src/model/quantities.ts` derives current quantities.
+6. Autosave serializes the versioned model to local storage. Explicit save writes app JSON; opening parses/migrates/validates before replacing the active project.
 
-## 3. Implementation plan
+## Invariants and extension rules
 
-Slices, in order. Each slice ends with tests and an end-to-end run.
+- **Canonical units:** store all lengths/elevations as integer millimetres. Convert only for display or at an explicit, tested external adapter. Revit API internal length is feet; do not leak it into this schema.
+- **Model first:** do not read mesh buffers, screen pixels, APS Viewer `dbId`s or imported geometry as authoritative app elements.
+- **Command boundary:** mutations go through validated model commands. Extend schema, migration, commands, derived geometry, UI and tests together.
+- **Type/instance scope:** type changes affect all instances referencing that type. The wall material selector updates the existing `WallType.materialId`; it does not change each wall independently.
+- **Derived display:** normal active-level wall color follows its type's referenced project material. Selection highlighting and the below-level plan tint retain precedence. This is display color only, not a Revit physical/thermal material.
+- **Persistence compatibility:** current save/open remains JSON schema v4 with v1/v2/v3 migrations. Schema migrations must preserve existing valid projects.
+- **External identity:** app IDs, source RVT IDs and derivative object IDs are distinct domains. Any future external mapping belongs in an explicit integration sidecar and must not overwrite native IDs.
 
-1. **Slice 1 (done):** schema v2 in mm with migration; integer-mm validation; levels; connected walls with derived joins; wall types; hosted doors and windows that cut wall openings; plan and 3D views driven by the same derived geometry; properties; undo/redo; autosave and recovery; save/reopen; end-to-end browser test.
-2. **Slice 2 (done):** schema v3 — materials assigned to types; floors (boundary sketches), rooms (computed areas), columns; derived quantities; polygon drawing tools; properties editors.
-3. **Slice 3 (done):** professional workspace — ribbon with 11 tabs and a command registry, QAT, contextual ribbon, project browser, view tabs, view control bar (scale/detail/visual style/shadows), status bar, command launcher (Ctrl+K), shortcut map, resizable/collapsible panels.
-4. **Slice 4 (next):** ceilings and simple roofs with overhang (M3 finish); wall material assignment UI.
-5. **Slice 5:** sections and elevations generated from the model (orthographic cuts of the same derived geometry), view ranges, dimensions, and annotations (M4).
-6. **Slice 6:** sheets, title blocks, PDF export at scale, DXF export of 2D entities, schedules from model data (M4/M5).
-7. **Later, requires approval:** IFC import/export with a tested schema subset, structural and MEP systems, cloud persistence, and collaboration.
+## Native Revit and APS integration boundary
 
-## 4. Slice 1 status
+The TypeScript/Vite frontend cannot execute Revit's .NET API. A future native RVT adapter would need a separate Revit/Automation runtime, an explicit mapping to native Revit types/parameters, transactions, migrations, error reporting and tests with real RVT fixtures. Model Derivative/Viewer can supply a read-only translated view and extracted metadata; it does not make those objects editable in this app.
 
-Verified by the commands below. Results are from the final run on this commit.
+No APS service, SDK, backend, credential or file upload is part of the current architecture. The optional isolated prototype proposal, account setup, pricing, token policy and no-go decision are documented in [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
-| Check | Result |
+## Verification snapshot
+
+| Command | Result on this revision |
 | --- | --- |
-| `npx tsc --noEmit` | passes |
-| `npm test` (vitest) | 46 unit tests pass across model, commands, schema migration, geometry invariants, joins, history, autosave, units |
-| `npm run build` | passes |
-| `npm run e2e` (headless Chromium, dev server) | 17 checks pass, including no console errors, page errors or failed requests |
+| `npm test` | 11 files, 95 tests passed. |
+| `npm run typecheck` | Passed (`tsc --noEmit`). |
+| `npm run build` | Passed; Vite reports the main 774.50 kB JS chunk exceeds its 500 kB advisory threshold (208.81 kB gzip). |
+| `LD_LIBRARY_PATH=/tmp/al2023/lib CHROME_PATH=/tmp/chromium APP_URL=http://localhost:5173 npm run e2e:all` | 5 browser suites, 63 checks passed; no console/page/request failures. |
 
-What the end-to-end test covers: draw three chained walls; snap a wall to an existing endpoint and undo it; place a door and a window in the correct walls; refuse a door outside its wall with a message; select and edit a door offset and a wall height in properties; undo and redo via buttons and shortcuts; render the 3D view; plan orientation matches the model; autosave recovery after reload; save to file, New, reopen, and check identities are preserved; migrate a version 1 file; delete a wall and its openings, then undo.
-
-Visual checks were made from screenshots taken by the test. They caught a mirrored plan (fixed) and doors hidden in plan (fixed by a 1200 mm cut plane).
-
-## 5. Known limitations after slice 1
-
-- Wall joins are detected only where endpoints coincide exactly. T-joins and mitered corners at non-right angles are rendered by overlapping boxes, not mitered.
-- Openings are rectangular and only in straight walls.
-- Wall height is a single value; no base or top offsets, and no layered (compound) wall types.
-- Undo history is in memory and is not saved with the project.
-- Autosave holds one slot in local storage.
-- Plan symbology is basic: windows show as solid sill walls with a thin glass line; there are no door swings, no break lines, and no hatching.
-- Walls are only joined where endpoints coincide exactly. T-joins are not mitered.
-- Wall snapping to an existing endpoint uses a 150 mm radius; there is no general object snapping yet.
-- There is no temporary dimension while drawing (the length appears only in properties after the wall is placed).
+The precise scenarios and sandbox prerequisites are in [`TESTING.md`](TESTING.md); dependency audit status and the bundle warning are in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).

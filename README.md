@@ -1,29 +1,36 @@
 # revit-web
 
-A browser-based building information modeling (BIM) editor, built from scratch.
+A browser-based BIM editor with an application-native semantic model and a Three.js plan/3D editor. **This project is not Autodesk Revit and does not read, edit or write RVT files.** Autodesk API/APS research and the carefully bounded integration recommendation are documented in [`docs/REVIT_API_AUDIT.md`](docs/REVIT_API_AUDIT.md).
 
-Current features (v0.1):
+## Current capabilities
 
-- 3D plan view with orbit, pan, and zoom (Three.js)
-- Levels with elevations; add, rename, and delete levels; the active level is the drawing target
-- Wall tool: click to place walls, chain them, and snap to 0.1 m, 0.5 m, or 1 m (or off)
-- Select walls to edit level, height, thickness, start/end points, and length; delete walls
-- Save and open projects as JSON (`*.revit-web.json`), with validation on load
-- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres
-  or feet); the model proposes a validated, previewed design plan that is applied through the real
-  command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus
-  generated elevations. See `docs/AI_ARCHITECT.md` for setup, security and limits.
+- Create/edit building levels; add connected straight walls; host rectangular doors/windows and validate fit.
+- Add polygon floors and rooms, rectangular columns, horizontal ceilings and simple hip roofs.
+- Use per-project element types and built-in display materials; choose a wall type's material and see its colour in the native 3D view.
+- Edit supported element properties, view derived areas/volumes, undo/redo, autosave/recover, and save/open versioned `*.revit-web.json` projects.
+- Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
+- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres or feet); the model proposes a validated, previewed design plan that is applied through the real command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus generated elevations. See [`docs/AI_ARCHITECT.md`](docs/AI_ARCHITECT.md) for setup, security and limits.
+
+The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v4; v1/v2/v3 files migrate to v4). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
 
 ## Getting started
 
 Requires Node.js 22 or newer.
 
 ```bash
-npm install
-npm run dev        # http://localhost:5173
-npm test           # unit tests for the model, geometry, history, persistence and AI pipeline
-npm run build      # type-check and production build
-CHROME_PATH=/path/to/chrome npm run e2e   # end-to-end test in a real browser (dev server must be running)
+npm ci
+npm run dev          # Vite dev server (default http://localhost:5173)
+npm test             # Unit and integration tests (model, geometry, AI pipeline, server)
+npm run typecheck    # TypeScript checks
+npm run build        # TypeScript checks and production build
+```
+
+For browser tests, start the dev server in one terminal, install/provide Chrome or Chromium, then run from another terminal:
+
+```bash
+CHROME_PATH=/path/to/chrome npm run e2e       # core workflow (slice 1)
+CHROME_PATH=/path/to/chrome npm run e2e:ai    # AI Architect workflow (DeepSeek mocked)
+CHROME_PATH=/path/to/chrome npm run e2e:all   # all browser suites
 ```
 
 ### AI Architect (DeepSeek)
@@ -44,57 +51,51 @@ Configuration: `DEEPSEEK_API_KEY` (required), `DEEPSEEK_MODEL` (default `deepsee
 `AI_TIMEOUT_MS`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
 `docs/AI_ARCHITECT.md`. Manual live-API test (spends tokens): `DEEPSEEK_API_KEY=sk-... npm run test:ai-manual`.
 
-## What works (slice 1)
-
-- Levels with millimetre elevations: add, rename, change elevation, delete (cascades to walls and openings).
-- Connected walls: wall tool draws chained walls; a new wall that starts within 150 mm of an existing endpoint snaps to it and joins it.
-- Wall types with thickness; changing a type updates every wall of that type.
-- Doors and windows hosted in walls. They are refused if they fall outside the wall, overlap another opening, or are taller than the wall. Deleting a wall deletes its openings.
-- Plan view (orthographic, walls cut at 1200 mm) and 3D view, both from the same derived geometry. In plan, X points right and Y points up.
-- Properties panel for walls, doors and windows, with whole-millimetre fields.
-- Undo and redo (toolbar buttons, Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y).
-- Autosave to the browser, recovered on reload.
-- Save and open project files (`*.revit-web.json`). Files in the first format are migrated to millimetres.
-
-Known limitations: see `docs/ARCHITECTURE.md` section 4. Windows show as solid sill walls in plan, with only a thin glass line; plan symbology is planned for a later slice.
+See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and the tested sandbox setup. Build output currently includes Vite's informational warning that the Three.js application chunk exceeds 500 kB; see [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
 ## Shortcuts
 
-| Key      | Action                                   |
-| -------- | ---------------------------------------- |
-| `S`      | Select tool                              |
-| `W`      | Wall tool                                |
-| `D`      | Door tool (click near a wall)            |
-| `N`      | Window tool (click near a wall)          |
-| `Esc`    | Finish wall chain / back to Select       |
-| `Delete` | Delete the selected wall, door or window |
-| `Ctrl+Z` | Undo                                     |
-| `Ctrl+Shift+Z` or `Ctrl+Y` | Redo                   |
+| Key | Action |
+| --- | --- |
+| `S` | Select tool |
+| `W` | Wall tool |
+| `D` | Door tool (click near a wall) |
+| `N` | Window tool (click near a wall) |
+| `F` | Floor tool |
+| `R` | Room tool |
+| `C` | Column tool |
+| `E` | Ceiling tool |
+| `O` | Roof tool |
+| `Esc` | Finish boundary/wall chain or return to Select |
+| `Delete` | Delete selection |
+| `Ctrl+K` | Search commands |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Shift+Z` or `Ctrl+Y` | Redo |
+| `F1` | Shortcut reference |
 
 ## Project layout
 
+```text
+src/model/       Canonical schema v4, integer-mm units, commands, validation, quantities
+src/geometry/    Derived geometry for building elements plus model-derived elevation projections
+src/viewer/      Native Three.js plan/3D scene and pointer interaction
+src/app/         Undo/redo history and command registry
+src/persistence/ Browser autosave/recovery
+src/ui/          Ribbon, browser, view tabs, properties, read-only elevation renderer and workspace controls
+src/App.tsx      Application shell and model-command wiring
+src/ai/          AI Architect: DesignPlan schema, transactional apply engine, project context
+server/          AI server: DeepSeek endpoint (key stays server-side) and static SPA hosting
+e2e/             Puppeteer browser workflows (slice 1 to slice 6, incl. the AI Architect)
+src/__tests__/   Vitest unit/integration/regression tests
+docs/            Scope, architecture, roadmap, tests, limitations, Revit/APS audit and AI design
 ```
-src/model/       Canonical model: types, integer-mm units, commands, validation, schema, joins, queries
-src/geometry/    Derived geometry: wall solids with openings cut (pure, no rendering)
-src/viewer/      Three.js scene: plan and 3D views of derived geometry, pointer input
-src/app/         Undo/redo history (pure reducer)
-src/persistence/ Autosave to local storage
-src/ui/          Panels and form controls
-src/App.tsx      Application shell: toolbar, tools, commands wiring
-e2e/             End-to-end browser test (puppeteer-core)
-```
-
-The model is the source of truth. Every edit goes through a command in `src/model/commands.ts`, which validates the whole project before returning. The viewer only renders derived geometry.
 
 ## Units and coordinates
 
-- All lengths in the model are integer millimetres. Elevation is measured from the project datum.
-- Plan `(x, y)` maps to world `(x, elevation, -y)` in the 3D scene. Only `src/viewer/BimScene.ts` converts units.
+- Lengths and elevations are integer millimetres; level elevation is relative to the app's project datum.
+- Plan `(x, y)` maps to world `(x, elevation, -y)` in the 3D scene.
+- Keep the app's canonical units unchanged; convert only at an explicit, tested export or integration boundary.
 
 ## Clean-room policy
 
-This project is an independent implementation. It is not derived from Autodesk Revit or any other proprietary BIM product. Do not add code, binaries, file-format parsers, or assets that were decompiled or extracted from Revit or similar commercial software. New file formats should be based on public specifications, such as buildingSMART IFC and glTF.
-
-## Roadmap
-
-See `docs/ARCHITECTURE.md` for the slice plan: floors, roofs, rooms and materials; sections and elevations; dimensions and sheets; exports; then IFC and structural/MEP work, which needs approval.
+This project is an independent implementation. Do not add code, binaries, file-format parsers or assets extracted/decompiled from Revit or another proprietary BIM product. New file formats must use public specifications and independently implemented/tested mappings.
