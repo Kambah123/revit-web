@@ -29,6 +29,8 @@ import type {
   Level,
   Material,
   Opening,
+  OpeningKind,
+  OpeningType,
   Point,
   Polygon,
   Project,
@@ -202,6 +204,51 @@ export function deleteColumnType(p: Project, columnTypeId: string): Project {
     throw new Error("That column type is used by a column. Delete or retype the columns first.");
   }
   return commit({ ...p, columnTypes: p.columnTypes.filter((t) => t.id !== columnTypeId) });
+}
+
+/** Adds a door or window type. Doors must have a zero sill height (validation enforces this). */
+export function addOpeningType(
+  p: Project,
+  name: string,
+  kind: OpeningKind,
+  width: number,
+  height: number,
+  sillHeight: number,
+): { project: Project; openingType: OpeningType } {
+  const openingType: OpeningType = {
+    id: newId("ot"),
+    name: name.trim(),
+    kind,
+    width,
+    height,
+    sillHeight: kind === "door" ? 0 : sillHeight,
+  };
+  return { project: commit({ ...p, openingTypes: [...p.openingTypes, openingType] }), openingType };
+}
+
+/** Edits door or window type parameters. Every opening of this type follows the new values. */
+export function updateOpeningType(
+  p: Project,
+  openingTypeId: string,
+  patch: Partial<Pick<OpeningType, "name" | "width" | "height" | "sillHeight">>,
+): Project {
+  const existing = openingTypeById(p, openingTypeId);
+  if (!existing) throw new Error("Unknown door or window type.");
+  const updated: OpeningType = { ...existing, ...patch };
+  if (updated.kind === "door") updated.sillHeight = 0;
+  return commit({
+    ...p,
+    openingTypes: p.openingTypes.map((t) => (t.id === openingTypeId ? updated : t)),
+  });
+}
+
+/** Deletes a door or window type; refused while any opening uses it. */
+export function deleteOpeningType(p: Project, openingTypeId: string): Project {
+  if (!openingTypeById(p, openingTypeId)) throw new Error("Unknown door or window type.");
+  if (p.openings.some((o) => o.openingTypeId === openingTypeId)) {
+    throw new Error("That type is used by a door or window. Delete or retype the openings first.");
+  }
+  return commit({ ...p, openingTypes: p.openingTypes.filter((t) => t.id !== openingTypeId) });
 }
 
 // ---------------------------------------------------------------------------

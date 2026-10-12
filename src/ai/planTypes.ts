@@ -196,6 +196,7 @@ export interface RoofAdd {
 export interface RoofUpdate {
   op: "roof.update";
   roof: ElementRef;
+  level?: ElementRef;
   boundary?: PlanPoint[];
   overhang?: LengthValue;
   rise?: LengthValue;

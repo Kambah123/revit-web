@@ -384,6 +384,7 @@ function parseOperation(raw: unknown, path: string, c: Collector): PlanOperation
       break;
     case "roof.update":
       ref("roof", true);
+      ref("level", false);
       ref("roofType", false);
       boundary("boundary", false);
       length("overhang", { min: 0, max: 10_000 });
