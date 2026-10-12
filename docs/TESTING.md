@@ -1,6 +1,6 @@
 # Testing
 
-The canonical app model is tested at three levels: pure commands/geometry/schema tests, a TypeScript check and production bundle, and browser workflows against the native Three.js editor. User-visible changes to the model/view/UI must preserve existing project files and workflows and have regression coverage.
+The canonical app model is tested at three levels: pure commands/geometry/schema tests, a TypeScript check and production bundle, and browser workflows against the native editor. User-visible changes to model/view/UI must preserve existing project files and workflows and have regression coverage.
 
 ## Commands
 
@@ -10,7 +10,7 @@ npm test              # vitest run
 npm run typecheck     # tsc --noEmit
 npm run build         # tsc --noEmit && vite build
 npm run e2e            # browser slice 1 only
-npm run e2e:all        # slice 1 + slices 2–4
+npm run e2e:all        # slices 1–5
 ```
 
 The Puppeteer suites require a running Vite dev server and a Chrome/Chromium executable. Start `npm run dev` in one terminal; in another:
@@ -26,7 +26,7 @@ LD_LIBRARY_PATH=/tmp/al2023/lib CHROME_PATH=/tmp/chromium \
   APP_URL=http://localhost:5173 npm run e2e:all
 ```
 
-The four suites are intentionally run serially by `e2e:all`; they reset/use browser project state independently.
+The five suites are intentionally run serially by `e2e:all`; they reset/use browser project state independently.
 
 ## Unit and integration tests
 
@@ -35,7 +35,7 @@ The four suites are intentionally run serially by `e2e:all`; they reset/use brow
 | Area | File | Coverage |
 | --- | --- | --- |
 | Units and integer-mm parsing | `units.test.ts` | Millimetre conversion, parsing and integer invariants. |
-| Geometry and projections | `geometry.test.ts`, `elementGeometry.test.ts` | Wall/opening geometry, cut plane, projection, slab elevations, hip-roof ridge, rectangle constraints. |
+| Geometry and projections | `geometry.test.ts`, `elementGeometry.test.ts`, `elevation.test.ts` | Wall/opening geometry, cut plane, slab/roof geometry, view-right axis, facade projections and level datums. |
 | Commands and validation | `commands.test.ts`, `elements.test.ts` | Commands, invalid edit rejection, host/type/material references, deletion cascades and type updates. |
 | Polygons and quantities | `polygon.test.ts`, `quantities.test.ts` | Area, centroid, self-intersection and derived floor/room/wall/column quantities. |
 | Schema and migration | `schema.test.ts` | Stable JSON round trips, malformed files, v1/v2/v3 migration to schema v4. |
@@ -54,12 +54,13 @@ All suites use `puppeteer-core` with Chromium, exercise the running app UI, and 
 | `e2e/slice2.e2e.mjs` | Floor, room and column workflows, derived properties/quantities, persistence and validation. |
 | `e2e/slice3.e2e.mjs` | Ribbon/workspace, command launcher, Project Browser, view tabs/controls, panel and shortcut workflows. |
 | `e2e/slice4.e2e.mjs` | Ceiling/hip-roof creation and editing, geometry/rendering, invalid roof boundary, undo/redo. |
+| `e2e/slice5.e2e.mjs` | Generated north/east elevations, level datums/roof silhouette, read-only behavior, tab switching/closing and model preservation. |
 
-Screenshots are written to the ignored E2E screenshot directory. Visual review is part of the acceptance check; an assertion-only pass does not prove that geometry or colors render correctly.
+Screenshots are written to the ignored E2E screenshot directory. Visual review is part of acceptance; assertion-only success does not prove that geometry or colors render correctly.
 
 ## Current verification record
 
-The latest verified numbers and exact command environment are maintained in [`PROGRESS.md`](PROGRESS.md). Baseline before the wall-material change: 89 unit tests and 51 browser checks. The material update adds a command regression and browser coverage; the latest full run passes 90 unit tests and 52 browser checks. The production build has an informational Vite warning when the main JS chunk exceeds 500 kB; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+The exact latest commands/results and counts are maintained in [`PROGRESS.md`](PROGRESS.md). The wall-material patch adds a command regression and browser coverage; the base branch also adds model-derived elevations and their projection/browser tests. The production build has an informational Vite warning when the main JS chunk exceeds 500 kB; see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
 ## Regression policy
 

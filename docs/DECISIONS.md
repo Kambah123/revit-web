@@ -57,7 +57,11 @@ The 3D view renders every level, while a level plan shows that level and lower l
 
 The segment-intersection test compared orientation values instead of their signs, so non-intersecting edges with same-sign but unequal orientations could be rejected as crossing. Fixed to a strict sign test plus endpoint-on-segment checks, with unit coverage for slanted quadrilaterals and pentagons.
 
-## D13 — Wall material remains a type-level semantic field; APS stays optional and read-only (2026-10-12)
+## D13 — Elevations: generated views, facade naming, viewer-right axis (2026-10-12)
+
+Elevations are derived views, never stored: `src/geometry/elevation.ts` projects the same solids the 3D viewer uses onto a vertical plane. Naming follows the architectural convention (the "North" elevation shows the north facade, seen from the north). The horizontal axis `u` always increases to the viewer's right — north u=-x, south u=+x, east u=+y, west u=-y. Walls render as one face per wall (the split solid pieces around openings are unioned), openings as punched rectangles, and hip roofs as the convex hull of their projected vertices (trapezoid from the sides, triangle from the ends). Level datums draw over the building. Elevations are read-only: modelling shortcuts are inert there.
+
+## D14 — Wall material remains type-level; APS stays optional and read-only (2026-10-12)
 
 The wall properties UI edits the existing `WallType.materialId`, and native Three.js walls resolve the referenced app material's display color. Do not duplicate the assignment onto each wall or reinterpret display color as physical/thermal data. The change requires no schema bump and is covered by command and browser tests.
 

@@ -46,6 +46,8 @@ import { Ribbon } from "./ui/Ribbon";
 import { CommandLauncher } from "./ui/CommandLauncher";
 import { ShortcutsDialog } from "./ui/ShortcutsDialog";
 import { BimScene, type Selection, type Tool, type ViewMode, type VisualStyle } from "./viewer/BimScene";
+import { ElevationView } from "./ui/ElevationView";
+import { elevationTitle, type ElevationDirection } from "./geometry/elevation";
 
 interface Message {
   kind: "info" | "error";
@@ -85,6 +87,8 @@ function loadInitial(): { project: Project; message: Message | null } {
 }
 
 const planTabId = (levelId: string) => `plan:${levelId}`;
+const elevTabId = (d: ElevationDirection) => `elev:${d}`;
+const elevationTab = (d: ElevationDirection): ViewTab => ({ id: elevTabId(d), kind: "elevation", direction: d, title: elevationTitle(d) });
 const THREED_TAB: ViewTab = { id: "3d", kind: "3d", title: "3D" };
 
 export function App() {
@@ -94,6 +98,7 @@ export function App() {
 
   const [tool, setTool] = useState<Tool>("select");
   const [view, setView] = useState<ViewMode>("plan");
+  const [elevation, setElevation] = useState<ElevationDirection | null>(null);
   const [activeLevelId, setActiveLevelId] = useState<string>(project.levels[0].id);
   const [selectionState, setSelection] = useState<Selection>(null);
   const [pendingStart, setPendingStart] = useState<Point | null>(null);
@@ -144,8 +149,8 @@ export function App() {
   }
 
   // Handlers for the scene read the latest state through this ref, because the scene is created once.
-  const ctx = useRef({ project, tool, activeId, pendingStart, pendingPoints, snapStep, run });
-  ctx.current = { project, tool, activeId, pendingStart, pendingPoints, snapStep, run };
+  const ctx = useRef({ project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation });
+  ctx.current = { project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -170,7 +175,7 @@ export function App() {
         screenOf: (p) => scene.planToScreen(p),
         meshCount: () => scene.meshCount(),
         wallColor: (wallId) => scene.wallColor(wallId),
-        view: () => scene.currentView(),
+        view: () => (ctx.current.elevation ? "elevation" : scene.currentView()),
       };
     }
     return () => {
@@ -266,6 +271,9 @@ export function App() {
       } else if (event.key === "F1" || event.key === "?") {
         event.preventDefault();
         setShortcutsOpen(true);
+      } else if (ctx.current.elevation && event.key !== "Escape") {
+        // Elevations are read-only generated views: modelling shortcuts do not apply.
+        return;
       } else if (event.key === "Escape") {
         if (ctx.current.pendingStart || ctx.current.pendingPoints.length > 0) {
           setPendingStart(null);
@@ -519,7 +527,8 @@ export function App() {
         setSelection(null);
         setPendingStart(null);
         setPendingPoints([]);
-        setOpenViews([
+        setElevation(null);
+    setOpenViews([
           { id: planTabId(loaded.levels[0].id), kind: "plan", levelId: loaded.levels[0].id, title: loaded.levels[0].name },
           THREED_TAB,
         ]);
@@ -556,6 +565,7 @@ export function App() {
     setSelection(null);
     setPendingStart(null);
     setPendingPoints([]);
+    setElevation(null);
     setOpenViews([
       { id: planTabId(next.levels[0].id), kind: "plan", levelId: next.levels[0].id, title: next.levels[0].name },
       THREED_TAB,
@@ -567,12 +577,19 @@ export function App() {
   // View tabs and the command registry
   // ---------------------------------------------------------------------------
 
+  const activeTabId = elevation ? elevTabId(elevation) : view === "3d" ? THREED_TAB.id : planTabId(activeId);
+
   function switchToTab(tab: ViewTab) {
     if (tab.kind === "plan" && tab.levelId) {
+      setElevation(null);
       setView("plan");
       setActiveLevelId(tab.levelId);
       setOpenViews((tabs) => (tabs.some((t) => t.id === tab.id) ? tabs : [...tabs, tab]));
+    } else if (tab.kind === "elevation" && tab.direction) {
+      setElevation(tab.direction);
+      setOpenViews((tabs) => (tabs.some((t) => t.id === tab.id) ? tabs : [...tabs, tab]));
     } else {
+      setElevation(null);
       setView("3d");
       setOpenViews((tabs) => (tabs.some((t) => t.id === THREED_TAB.id) ? tabs : [...tabs, THREED_TAB]));
     }
@@ -584,7 +601,7 @@ export function App() {
     setOpenViews((tabs) => {
       const remaining = tabs.filter((t) => t.id !== id);
       const list = remaining.length > 0 ? remaining : [THREED_TAB];
-      const wasActive = (view === "3d" ? THREED_TAB.id : planTabId(activeId)) === id;
+      const wasActive = activeTabId === id;
       if (wasActive) {
         const next = list[0];
         // Defer so we never setState during render of the updater.
@@ -664,7 +681,6 @@ export function App() {
     stub("annotate.text", "Text", "Text notes with leaders (roadmap M4).", "annotate", "annotate"),
     stub("annotate.tag", "Tag", "Element tags (roadmap M4).", "annotate", "annotate"),
     stub("view.section", "Section", "Building sections generated from the model (roadmap M4).", "annotate", "annotate"),
-    stub("view.elevation", "Elevation", "Elevations generated from the model (roadmap M4).", "annotate", "annotate"),
     stub("view.callout", "Callout", "Callout views (roadmap M4).", "annotate", "annotate"),
     stub("analyze.space", "Space", "MEP spaces (roadmap M8).", "analyze", "analyze"),
     stub("analyze.zone", "Zone", "Zones (roadmap M8).", "analyze", "analyze"),
@@ -711,10 +727,25 @@ export function App() {
     ];
   }
 
+  const switchView = (v: ViewMode) => {
+    setElevation(null);
+    setView(v);
+  };
+
   function viewCommands(): CommandSpec[] {
     return [
-      { id: "view.plan", title: "Floor Plan", description: "Open the plan of the active level.", tab: "view", group: "view", implemented: true, run: () => setView("plan"), isActive: () => view === "plan" },
-      { id: "view.3d", title: "3D View", description: "Open the default 3D view.", tab: "view", group: "view", implemented: true, run: () => setView("3d"), isActive: () => view === "3d" },
+      { id: "view.plan", title: "Floor Plan", description: "Open the plan of the active level.", tab: "view", group: "view", implemented: true, run: () => switchView("plan"), isActive: () => view === "plan" && !elevation },
+      { id: "view.3d", title: "3D View", description: "Open the default 3D view.", tab: "view", group: "view", implemented: true, run: () => switchView("3d"), isActive: () => view === "3d" && !elevation },
+      ...(["north", "south", "east", "west"] as const).map((d) => ({
+        id: `view.elevation.${d}`,
+        title: elevationTitle(d),
+        description: `Generated ${d} elevation of the whole model.`,
+        tab: "view" as const,
+        group: "view" as const,
+        implemented: true,
+        run: () => switchToTab(elevationTab(d)),
+        isActive: () => elevation === d,
+      })),
       { id: "view.wireframe", title: "Wireframe", description: "Wireframe visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("wireframe"), isActive: () => visualStyle === "wireframe" },
       { id: "view.hiddenLine", title: "Hidden Line", description: "Hidden-line visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("hiddenLine"), isActive: () => visualStyle === "hiddenLine" },
       { id: "view.shaded", title: "Shaded", description: "Shaded visual style.", tab: "view", group: "view", implemented: true, run: () => setVisualStyle("shaded"), isActive: () => visualStyle === "shaded" },
@@ -726,7 +757,9 @@ export function App() {
   const commandById = new Map(commands.map((c) => [c.id, c]));
 
   const hint =
-    tool === "wall"
+    elevation
+      ? "Generated elevation — read-only. Switch to Plan or 3D to model."
+      : tool === "wall"
       ? pendingStart
         ? "Click the next point to continue the wall. Esc finishes."
         : `Click a start point on ${activeLevel?.name ?? "the active level"}. Ends snap to existing walls.`
@@ -821,7 +854,7 @@ export function App() {
 
       <ViewTabs
         tabs={openViews}
-        activeId={view === "3d" ? THREED_TAB.id : planTabId(activeId)}
+        activeId={activeTabId}
         onActivate={(id) => {
           const tab = openViews.find((t) => t.id === id);
           if (tab) switchToTab(tab);
@@ -835,7 +868,7 @@ export function App() {
             <ProjectBrowser
               project={project}
               openViews={openViews}
-              activeViewId={view === "3d" ? THREED_TAB.id : planTabId(activeId)}
+              activeViewId={activeTabId}
               onOpenView={switchToTab}
             />
             <LevelsPanel
@@ -872,11 +905,12 @@ export function App() {
 
         <main className="viewport">
           <div className="canvas-host" ref={containerRef} />
+          {elevation ? <ElevationView project={project} direction={elevation} /> : null}
           <div className="hint">{hint}</div>
           {message && <div className={`status ${message.kind}`}>{message.text}</div>}
           <ViewControlBar
             view={view}
-            onView={setView}
+            onView={switchView}
             scale={scale}
             onScale={setScale}
             detail={detail}

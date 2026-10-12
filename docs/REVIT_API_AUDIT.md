@@ -1,7 +1,7 @@
 # Revit API, model schema, and APS integration audit
 
 **Audit date:** 2026-10-12 (UTC)
-**Repository inspected:** `Kambah123/revit-web`, branch `arena/11b23c70-revit-web`, starting commit `ce68041c55cb47d950bf22d084ec54b326c44e19`
+**Repository inspected:** `Kambah123/revit-web`, branch `arena/11b23c70-revit-web`, based at `ce68041c55cb47d950bf22d084ec54b326c44e19` and synchronized with main's M4 elevation implementation (`1ad8a1d` / `9a28692`)
 **Technical source policy:** Autodesk/APS primary documentation only for Revit/APS behavior. This is an architectural audit, not a claim of testing against Revit or an RVT file.
 
 ## Executive result
@@ -23,9 +23,9 @@ A narrowly scoped, tested implementation is included: wall types can now select 
 | Invariants and commands | `src/model/validation.ts`, `commands.ts` | Edits are immutable commands; the whole project is validated before a command commits. Invalid type/material/host/level references are rejected. |
 | Derived geometry | `src/geometry/` | Pure, regenerated wall/opening, floor, room, column, ceiling and simple roof geometry. Meshes are not saved or authoritative. |
 | Quantities | `src/model/quantities.ts` | Derived from current model geometry/parameters, not stored as authoritative inputs. |
-| Editing and viewing | `src/App.tsx`, `src/viewer/BimScene.ts` | Native Three.js plan and 3D views, pointer picking and editing. This path remains intact. |
+| Editing and viewing | `src/App.tsx`, `src/viewer/BimScene.ts`, `src/ui/ElevationView.tsx` | Native Three.js plan/3D views plus generated read-only SVG elevations, pointer picking and editing in supported model views. This native path remains intact. |
 | History and persistence | `src/app/history.ts`, `src/persistence/` | Immutable snapshot undo/redo, browser autosave/recovery, project JSON file save/open. |
-| Tests | `src/__tests__/`, `e2e/` | Unit/regression suite and four browser workflows. Exact final commands/results are in `docs/TESTING.md` and `docs/PROGRESS.md`. |
+| Tests | `src/__tests__/`, `e2e/` | Unit/regression suite and five browser workflows, including generated elevations. Exact final commands/results are in `docs/TESTING.md` and `docs/PROGRESS.md`. |
 
 ### Concepts mapped to the current schema
 
@@ -45,12 +45,12 @@ This mapping identifies useful analogues, **not** byte-for-byte/native-file equi
 | `RoofType` / `Roof` (axis-aligned rectangle, overhang, rise) | `RoofType` / `FootPrintRoof` or other `RoofBase` subtype | Current roof is one computed hip-roof solid. It is not a general footprint/extrusion roof, native slope definition, roof edit sketch, or arbitrary roof form. |
 | Specific fields such as `height`, `thickness`, `offset`, `rise`, `overhang` | Revit built-in/type/instance `Parameter`s | These are app-specific typed TypeScript fields, not a generic parameter registry. The app has no parameter GUIDs, spec/data-type IDs, project/category bindings, formula/read-only rules, or shared-parameter definitions. |
 | `projectGeometry()` / slab, column, roof geometry and quantities | Revit geometry/quantity engine | App geometry and quantities are custom, derived approximations. They do not invoke Revit's solid kernel or guarantee Revit-equivalent quantity rules. |
-| Plan/3D view state | `ViewPlan`, `View3D`, other `View` subclasses | The app currently has one plan behavior per level and a 3D view. No persisted Revit-style view records, view ranges, sections/elevations, sheets, annotations, or schedules. |
+| Plan/3D/elevation view state | `ViewPlan`, `View3D`, elevation `ViewSection` semantics and other `View` subclasses | The app has one plan behavior per level, a 3D view and four generated read-only elevation projections. They are not persisted Revit-style view records and have no view ranges; sections, sheets, annotations and schedules remain unimplemented. |
 | App IDs (`id` fields), derivative IDs | Revit element `UniqueId` / APS `externalId`, `objectId`, Viewer `dbId` | App IDs are local opaque IDs. Validation rejects duplicates within each collection, not globally across all collections. APS `objectId`/`dbId` are derivative-scoped and must never be substituted for app IDs; use APS `externalId` plus source/version context in a future sidecar. |
 
 ### What can and cannot be claimed
 
-- **Supported today:** edit the app's own semantic types/elements, see regenerated native Three.js views, undo/redo, browser recovery, and save/open app JSON.
+- **Supported today:** edit the app's own semantic types/elements, see regenerated native Three.js plan/3D views and derived read-only SVG elevations, undo/redo, browser recovery, and save/open app JSON.
 - **Not implemented:** opening, parsing, editing, or exporting an RVT file; running Revit API calls from TypeScript; importing a derivative into editable app-native elements; interoperable RVT identity/parameter mapping.
 - **Future read-only path:** Model Derivative translates an RVT for a viewer and exposes extracted object trees/properties. This is an imported view/metadata sidecar only unless a separately specified importer maps objects into the canonical model and validates the result.
 - **Future native-RVT authoring path:** requires a server-side C#/.NET Revit adapter running under Revit or Revit Automation, a deliberate mapping into native Revit transactions, version/error handling and round-trip tests. It is not equivalent to rendering an RVT derivative.
@@ -63,7 +63,7 @@ This mapping identifies useful analogues, **not** byte-for-byte/native-file equi
 - `src/vite-env.d.ts`, `src/App.tsx`, `src/viewer/BimScene.ts`: type and expose a development-only `wallColor` hook for browser verification; it is absent from production builds.
 - `src/__tests__/commands.test.ts`: verifies type-level assignment, unchanged wall instances and refusal of a missing material.
 - `e2e/slice1.e2e.mjs`: selects a wall, changes type material, asserts the model and actual rendered color, then verifies undo/redo.
-- `e2e/slice2.e2e.mjs`: corrects the migration step's assertion text from v3 to v4. `package.json` adds `e2e:all` without changing the existing slice-1 `e2e` command.
+- `e2e/slice2.e2e.mjs`: corrects the migration step's assertion text from v3 to v4. `package.json` adds `e2e:all` (now including the existing slice-5 elevation workflow after branch synchronization) without changing the existing slice-1 `e2e` command.
 
 No schema/version change, runtime dependency, external API call, APS credential, backend or file-format behavior was introduced. The full patch is inspectable with `git diff`; test outcomes are recorded in `docs/PROGRESS.md`.
 
@@ -96,7 +96,7 @@ No schema/version change, runtime dependency, external API call, APS credential,
 
 - Distinguish manually sketched rooms from wall/room-bounding computed spaces; define boundary provenance and test area/volume rules.
 - Add constrained stairs/landings and richer roof/floor shapes only with explicit schema/validation/geometry coverage.
-- Add persisted plan/RCP/section/elevation view records, view ranges and annotations from canonical geometry. Views remain projections of one semantic model, not separate meshes.
+- Extend the current generated elevations with persisted view configuration; add RCP/section views, view ranges and annotations from canonical geometry. Views remain projections of one semantic model, not separate meshes.
 
 ### P3 — Schedules and open-format interchange
 

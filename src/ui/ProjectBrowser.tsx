@@ -1,9 +1,11 @@
 import type { Project } from "../model/types";
+import { ELEVATION_DIRECTIONS, elevationTitle, type ElevationDirection } from "../geometry/elevation";
 
 export interface ViewTab {
   id: string;
-  kind: "plan" | "3d";
+  kind: "plan" | "3d" | "elevation";
   levelId?: string;
+  direction?: ElevationDirection;
   title: string;
 }
 
@@ -26,6 +28,12 @@ export function ProjectBrowser({ project, openViews, activeViewId, onOpenView }:
     title: l.name,
   }));
   const threeD: ViewTab = { id: "3d", kind: "3d", title: "{3D}" };
+  const elevations: ViewTab[] = ELEVATION_DIRECTIONS.map((d) => ({
+    id: `elev:${d}`,
+    kind: "elevation" as const,
+    direction: d,
+    title: elevationTitle(d),
+  }));
 
   const row = (view: ViewTab) => {
     const open = openViews.some((v) => v.id === view.id);
@@ -37,7 +45,7 @@ export function ProjectBrowser({ project, openViews, activeViewId, onOpenView }:
           onClick={() => onOpenView(view)}
           title="Open view"
         >
-          <span className="tree-icon">{view.kind === "3d" ? "3D" : "FP"}</span>
+          <span className="tree-icon">{view.kind === "3d" ? "3D" : view.kind === "elevation" ? "EL" : "FP"}</span>
           {view.title}
           {open ? "" : ""}
         </button>
@@ -53,6 +61,8 @@ export function ProjectBrowser({ project, openViews, activeViewId, onOpenView }:
         <ul>{planViews.map(row)}</ul>
         <h3>Views (3D)</h3>
         <ul>{row(threeD)}</ul>
+        <h3>Views (Elevations)</h3>
+        <ul>{elevations.map(row)}</ul>
         <h3>Sheets</h3>
         <p className="muted">No sheets yet. Sheets and title blocks arrive with documentation (roadmap M4).</p>
         <h3>Schedules/Quantities</h3>

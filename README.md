@@ -8,7 +8,7 @@ A browser-based BIM editor with an application-native semantic model and a Three
 - Add polygon floors and rooms, rectangular columns, horizontal ceilings and simple hip roofs.
 - Use per-project element types and built-in display materials; choose a wall type's material and see its colour in the native 3D view.
 - Edit supported element properties, view derived areas/volumes, undo/redo, autosave/recover, and save/open versioned `*.revit-web.json` projects.
-- Work in a native Three.js orthographic plan and 3D view with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
+- Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
 
 The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v4; v1/v2/v3 files migrate to v4). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
 
@@ -57,11 +57,11 @@ See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and th
 
 ```text
 src/model/       Canonical schema v4, integer-mm units, commands, validation, quantities
-src/geometry/    Derived geometry for walls/openings, floors, rooms, columns, ceilings, roofs
+src/geometry/    Derived geometry for building elements plus model-derived elevation projections
 src/viewer/      Native Three.js plan/3D scene and pointer interaction
 src/app/         Undo/redo history and command registry
 src/persistence/ Browser autosave/recovery
-src/ui/          Ribbon, browser, view tabs, properties and workspace controls
+src/ui/          Ribbon, browser, view tabs, properties, read-only elevation renderer and workspace controls
 src/App.tsx      Application shell and model-command wiring
 e2e/             Four Puppeteer browser workflows
 src/__tests__/   Vitest unit/integration/regression tests

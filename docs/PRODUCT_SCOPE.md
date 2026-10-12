@@ -1,12 +1,12 @@
 # Product scope and current feature inventory
 
 **Reverified:** 2026-10-12 (UTC)
-**Repository:** `arena/11b23c70-revit-web`, starting from `ce68041`; canonical model schema v4.
+**Repository:** `arena/11b23c70-revit-web`, starting from `ce68041` and now including main's M4 elevation work; canonical model schema v4.
 **Detailed Revit/APS comparison and recommendations:** [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
 ## Product vision
 
-A browser-based BIM editor with one authoritative, typed, serializable building model. Plans and 3D are projections of that model; rendering meshes are derived. The application can grow toward model-driven views, schedules, quantities and exchange, but those future capabilities are not implied by the product name or by Autodesk file viewing.
+A browser-based BIM editor with one authoritative, typed, serializable building model. Plans, generated elevations and 3D are projections of that model; rendering meshes are derived. The application can grow toward more model-driven views, schedules, quantities and exchange, but those future capabilities are not implied by the product name or by Autodesk file viewing.
 
 ## Status key
 
@@ -23,7 +23,7 @@ A browser-based BIM editor with one authoritative, typed, serializable building 
 | Contextual Modify ribbon | Implemented | Follows selection; does not imply every Revit contextual command exists. |
 | Project Browser | Implemented | Levels and views; not a full Revit Browser tree or linked-project browser. |
 | Properties palette | Partial | Supports the app's implemented elements and selected properties. It is not a generic Revit parameter palette. |
-| Plan and 3D view tabs | Implemented | Per-level plan tabs plus one native Three.js 3D view. Views are app UI state, not Revit `View` elements. |
+| Plan, 3D and elevation view tabs | Implemented | Per-level plan, one native Three.js 3D view and four read-only generated elevations. These are app UI views, not persisted Revit `View` elements. |
 | View Control Bar | Partial | Scale, detail level, visual style and shadows affect the current view; these settings are not saved as view templates. |
 | Status, snapping and tool hints | Implemented | Reports current app editing state; no worksharing or Revit status semantics. |
 | Searchable command launcher / shortcut dialog | Implemented | `Ctrl+K` launcher and `F1` shortcut reference; disabled commands are discoverable but not executable. |
@@ -53,9 +53,10 @@ A browser-based BIM editor with one authoritative, typed, serializable building 
 | --- | --- | --- |
 | Native Three.js plan view | Implemented | Orthographic plan, fixed 1200 mm cut plane, one plan per level; simple symbology. |
 | Native Three.js 3D view | Implemented | Derived app geometry, basic visual styles and shadows. Not Autodesk Viewer. |
-| Geometry regeneration | Implemented | `src/geometry/` builds from canonical data; geometry is not saved as the source of truth. |
+| Generated elevations | Partial | North/south/east/west read-only SVG silhouettes derived from the same model geometry; flat faces, no hatching/material patterns or hidden-line depth. Not persisted Revit `View` elements. |
+| Geometry regeneration | Implemented | `src/geometry/` builds from canonical data, including elevation projections; geometry is not saved as the source of truth. |
 | Basic quantities | Partial | Room/floor area and wall, floor and column quantities are derived by app-specific formulae. They are not certified Revit schedules or quantity-takeoff parity. |
-| RCP, elevations, sections, view ranges, dimensions, tags, sheets | Not implemented | Planned; current view tabs do not represent these native view objects. |
+| RCP, sections, view ranges, dimensions, tags, sheets | Not implemented | Planned; current view tabs do not represent these native view objects. |
 | Schedules, filters, formulas, material takeoffs, costing | Not implemented | Derived quantities in Properties are not schedules or a BOQ. |
 
 ## D. Commands, validation, history and persistence

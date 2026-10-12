@@ -6,7 +6,7 @@ Reverified 2026-10-12 (UTC). Current feature boundaries are in [`PRODUCT_SCOPE.m
 
 - The UI screenshot/PDF mentioned in the earlier prompt were not present in the reference-audit environment (see [`REFERENCE_AUDIT.md`](REFERENCE_AUDIT.md)); no page-by-page inspection is claimed.
 - No system Chrome/Chromium was available in this sandbox. Browser tests used a temporary `@sparticuz/chromium` binary with NSS/NSPR libraries in `/tmp/al2023/lib`; this package was not added to runtime or lockfile dependencies.
-- `npm run build` succeeds, but Vite warns that the minified main JS chunk is **769.75 kB** (207.12 kB gzip), above its 500 kB advisory threshold. Code splitting has not been attempted.
+- `npm run build` succeeds, but Vite warns that the minified main JS chunk is **774.50 kB** (208.81 kB gzip), above its 500 kB advisory threshold. Code splitting has not been attempted.
 - Full `npm audit` reports **13 development-tree vulnerabilities** (3 moderate, 8 high, 2 critical), associated with locked development/test tools such as Vite, Vitest and Puppeteer Core. `npm audit --omit=dev` reports **0 production-dependency vulnerabilities**. Major-version remediation was not attempted in this feature-focused change; keep the dev server private and schedule dependency upgrades separately.
 
 ## Model and geometry
@@ -26,16 +26,16 @@ Reverified 2026-10-12 (UTC). Current feature boundaries are in [`PRODUCT_SCOPE.m
 
 ## Views and workspace
 
-- One plan per level with a fixed 1200 mm cut plane; no view ranges, reflected ceiling plans, elevations or sections yet.
+- One plan per level with a fixed 1200 mm cut plane; no view ranges, reflected ceiling plans or sections yet.
+- Elevations (north/south/east/west) are generated read-only silhouettes from derived geometry: flat fills, no hatching/material patterns or hidden-line depth. They are not persisted Revit-style views.
 - Plan symbology is basic: no door swings, break lines, detailed hatching, dimensions, text, tags, symbols, callouts, view templates or visibility filters.
 - View scale/detail/visual style/shadow options are view-session state, not saved as view records/templates.
-- Undo history is in memory and is not saved in the project file.
 - Ribbon/workspace exists with 11 tabs, but most commands in Structure/Steel/Insert/Annotate/Analyze/Massing/Collaborate/Manage/Add-Ins remain disabled with explanatory “Not implemented yet” tooltips.
 - Some unselected objects can be hard to distinguish when their assigned display material matches their surroundings; selection highlighting remains available.
 
 ## Persistence and interoperability
 
-- Autosave has one browser-local storage slot; there is no recovery history, backend or cloud sync.
+- Undo history is in memory and is not saved in the project file. Autosave has one browser-local storage slot; there is no recovery history, backend or cloud sync.
 - `revit-web` JSON schema v4 is the only implemented project format. v1/v2/v3 migrate to v4. DXF, PDF, IFC, BCF, CSV/XLSX and GLB import/export are not implemented.
 - Native RVT read/write is not implemented; no Revit parser/runtime or APS job is present. A Model Derivative/Viewer derivative would be read-only external viewing/metadata, not editable native BIM elements.
 

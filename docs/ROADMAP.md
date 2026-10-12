@@ -29,7 +29,7 @@ M1 also gates M7 structural, M8 MEP, M9 open BIM, M10 rendering, M11 collaborati
 
 ### M2 — Professional workspace (complete)
 
-- Eleven-tab ribbon and command registry; implemented commands enabled and unsupported commands explicitly disabled; Quick Access Toolbar; contextual Modify ribbon; Project Browser; per-level plan and 3D view tabs; view control bar; status; `Ctrl+K` command launcher; shortcut dialog; resizable/collapsible panels.
+- Eleven-tab ribbon and command registry; implemented commands enabled and unsupported commands explicitly disabled; Quick Access Toolbar; contextual Modify ribbon; Project Browser; per-level plan, 3D and elevation view tabs; view control bar; status; `Ctrl+K` command launcher; shortcut dialog; resizable/collapsible panels.
 - **DoD:** implemented workspace commands are wired to the app; browser workflow and no-console/network-error checks pass. This does not mean all Revit ribbon commands exist.
 
 ### M3 — Architectural modelling (complete for the documented subset)
@@ -38,9 +38,10 @@ M1 also gates M7 structural, M8 MEP, M9 open BIM, M10 rendering, M11 collaborati
 - Wall properties now expose type-level material assignment and native 3D color rendering. Materials remain display colors, not physical/thermal Revit material assets.
 - **DoD:** supported model elements have commands/validation, derived geometry and properties, undo/redo and JSON compatibility. Boundaries and limitations are documented; v1/v2/v3 migration to schema v4 remains covered.
 
-### M4 — Views and documentation (next)
+### M4 — Views and documentation (in progress)
 
-- Persisted, model-derived elevation/section views and view ranges; reflected ceiling plans; dimensions and text annotations; sheets/title blocks/viewports; measured-scale PDF and scoped 2D DXF output.
+- **Completed:** read-only north/south/east/west SVG elevation silhouettes projected from the canonical derived geometry, with level datums, roof profiles, view tabs/browser entries and read-only interaction rules.
+- **Next:** sections from cut planes, persisted view configuration/ranges, reflected ceiling plans, dimensions and text annotations; then sheets/title blocks/viewports, measured-scale PDF and scoped 2D DXF output.
 - **DoD:** plan/elevation/section/3D agree from the same model; annotations are model-positioned; PDF scale is verified by measurement; DXF fixtures parse and preserve supported entities.
 
 ### M5 — Schedules, quantities and costing
@@ -91,7 +92,7 @@ A read-only APS Model Derivative/Viewer experiment is a separately deployable, o
 ## Testing strategy
 
 - Unit/integration: integer-mm units, schema/migrations, commands/validation, geometry/quantities, history and autosave.
-- Browser: `npm run e2e` for core workflow; `npm run e2e:all` for all four suites against a running dev server and Chromium.
+- Browser: `npm run e2e` for core workflow; `npm run e2e:all` for all five suites (including elevation views) against a running dev server and Chromium.
 - Verify no console/page/request errors and visually inspect screenshots for geometry/color defects.
 - Every schema change has migration coverage; every file-format adapter has positive/negative fixtures and identity rules.
 

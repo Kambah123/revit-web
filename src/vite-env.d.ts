@@ -7,6 +7,6 @@ interface Window {
     screenOf(point: import("./model/types").Point): { x: number; y: number };
     meshCount(): number;
     wallColor(wallId: string): string | null;
-    view(): "plan" | "3d";
+    view(): "plan" | "3d" | "elevation";
   };
 }

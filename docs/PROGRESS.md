@@ -2,54 +2,49 @@
 
 Latest state first. Record only executed commands/results; historical sessions follow current status.
 
-## Session 2026-10-12 — Revit/APS audit, wall material UI, and schema/docs reconciliation
+## Session 2026-10-12 — PR #4 branch synchronization with M4 elevation work
 
-**Branch/base:** `arena/11b23c70-revit-web` from `ce68041c55cb47d950bf22d084ec54b326c44e19` (`main`). No APS dependency, credentials, server or upload flow was added.
+**Branch:** `arena/11b23c70-revit-web`. The wall-material/audit commit `4843cc7` was synchronized with `origin/main` at `9a28692` (including elevation implementation commit `1ad8a1d`) so PR #4 can be merged against current `main`.
 
-**Repository/model audit:** inspected the React/TypeScript/Vite/Three.js source, model schema v4, migrations, validation, commands, derived geometry/quantities, history, local persistence, UI, tests and existing docs. Compared app concepts with official Autodesk Revit API/SDK, Model Derivative, Viewer, OAuth, Automation and pricing documentation. See [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md) for the schema mapping, integration boundary, APS cost/setup assumptions and explicit no-go recommendation.
+**Conflict resolution:** preserved the wall material test hook and the elevation view-state hook in `src/App.tsx`/`src/vite-env.d.ts`; retained the upstream elevation decision and added the wall-material/APS decision as D14; reconciled limitations, testing and progress docs. M4 north/south/east/west derived read-only SVG elevations and their unit/browser tests are now present on this branch. `npm run e2e:all` covers five suites.
 
-**Implementation (small scope):**
-- Added a wall type material selector to the existing Properties panel, wired to existing `updateWallType`/`WallType.materialId`; no schema bump.
-- Native Three.js walls now use the referenced project's display color in the normal active-level state; selected-wall highlight and below-level tint keep precedence.
-- Added a development-only wall-color e2e hook and regression coverage for assignment, invalid material rejection, rendered color and undo/redo.
-- Added `npm run e2e:all` to run the four existing browser suites and corrected slice 2's stale label: the v2 fixture migrates to schema v4, not v3.
-- Reconciled README, scope, architecture, roadmap, limitations, reference inventory and decision/progress docs with the checked-out schema/UI. APS remains a proposed isolated, read-only prototype only.
+**Current feature work on this branch:**
+- Wall type material assignment uses existing `WallType.materialId`; native Three.js walls resolve the project's display color. Selected and below-level appearance precedence remains intact. Schema stays v4.
+- Official Autodesk Revit API/SDK and APS audit, mapping, prioritized plan, optional isolated APS POC design and no-go recommendation are in [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
+- README, scope, architecture, roadmap, testing and limitations now include current M4 elevation capabilities without implying RVT editing.
 
-**Verification:**
+**Verification after syncing main:**
 
 | Command | Outcome |
 | --- | --- |
-| `npm ci` | 190 packages installed. Full dev dependency audit reported 13 advisories (3 moderate, 8 high, 2 critical); `npm audit --omit=dev` reports 0 production dependency vulnerabilities. No dependency upgrades attempted. |
-| `npm test` | 10 files, **90 tests passed**. |
+| `npm test` | 11 files, **95 tests passed**. |
 | `npm run typecheck` | Passed (`tsc --noEmit`). |
-| `npm run build` | Passed. Main JS chunk 769.75 kB / 207.12 kB gzip; Vite's >500 kB advisory warning remains. |
-| `LD_LIBRARY_PATH=/tmp/al2023/lib CHROME_PATH=/tmp/chromium APP_URL=http://localhost:5173 npm run e2e:all` | All 4 browser suites passed: slice1 18, slice2 11, slice3 14, slice4 9 — **52 checks total**, no console/page/request errors. |
+| `npm run build` | Passed. Main JS chunk **774.50 kB** / **208.81 kB gzip**; Vite's >500 kB advisory remains. |
+| `LD_LIBRARY_PATH=/tmp/al2023/lib CHROME_PATH=/tmp/chromium APP_URL=http://localhost:5173 npm run e2e:all` | Five suites passed: slice1 18, slice2 11, slice3 14, slice4 9, slice5 11 — **63 checks total**, no console/page/request errors. |
 | `npm audit --omit=dev` | `found 0 vulnerabilities`. |
 
-Portable Chromium was extracted from the test-only npm package to `/tmp/chromium`; its NSS/NSPR runtime libraries are under `/tmp/al2023/lib`. The dev server used port 5173. Build and full browser checks are green; warnings/issues are recorded in [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+The full dependency audit previously reported 13 development-tree advisories (3 moderate, 8 high, 2 critical); `npm audit --omit=dev` reported zero production dependency vulnerabilities. No dependency upgrades or APS services/credentials were added. The browser environment uses the temporary Chromium binary at `/tmp/chromium` and libraries at `/tmp/al2023/lib`.
 
-**Next:** M4 model-derived views/documentation (sections/elevations/RCP, view ranges, annotations, sheets and tested PDF/DXF), after scope/acceptance criteria are reviewed. Any APS prototype requires the approvals listed in `REVIT_API_AUDIT.md`; recommendation remains no-go now.
-
----
-
-## Historical session 2026-10-12 — M0–M3 foundation and schema v4 (prior branch)
-
-**Starting branch/commit:** `arena/63a6b55e-revit-web` @ `bd42fa0` (prior session; not this session's current branch).
-
-**Baseline at that time:** `npx tsc --noEmit` passed; Vitest 46 tests passed; build passed with a Three.js chunk warning. Portable Chromium was used for browser tests (see `DECISIONS.md` D6).
-
-**Slice 2a:** materials, floors, rooms and columns (schema v3); polygon helpers, quantities, commands/validation, level-delete cascade, v1/v2 migrations. Verified typecheck, 75 unit tests and build.
-
-**Slice 2b:** floor slabs, columns, plan-only room fills/name/area, polygon drawing tools, properties and quantities. Browser suites reported slice1 17/17 and slice2 11/11.
-
-**Slice 3:** professional workspace: command registry; 11 ribbon tabs; Quick Access Toolbar; contextual Modify ribbon; Project Browser; view tabs; View Control Bar; status; Ctrl+K launcher; shortcut map; resizable/collapsible panels. Browser suites reported slice1 17/17, slice2 11/11 and slice3 14/14.
-
-**Slice 4:** schema v4 ceilings and simple hip roofs; commands, validation, v3→v4 migration, boundary-chain tools, properties, picking, and fixes for polygon intersection and 3D all-level visibility. At that time, unit suite reported 89 tests and all four browser suites reported 51 checks (slice1 17, slice2 11, slice3 14, slice4 9). The current session adds wall material UI/rendering and expands slice1 to 18 checks.
-
-Historical next-task note (superseded): finish M3 by adding wall material assignment. Completed in the current session above.
+**Next product work:** M4 sections, view ranges, annotations and later sheets/exports. APS integration remains no-go without the documented approvals.
 
 ---
 
-## Earlier historical session — Slice 1 (merged before the prior branch)
+## Historical session — Revit/APS audit and wall material UI
 
-Implemented the initial BIM model with hosted doors/windows, plan and 3D views, undo/redo, autosave and project JSON. The prior session started from a squash-merged representation of this work; see historical decisions in [`DECISIONS.md`](DECISIONS.md).
+Started from `ce68041c55cb47d950bf22d084ec54b326c44e19`. Inspected the schema v4 source, validation, commands, geometry, quantities, history, persistence and UI; wrote the official Autodesk API/SDK and APS audit; added the wall type material selector, color rendering, command test, browser test, and `npm run e2e:all`. Initial verification was 90 unit tests and 52 browser checks before main's elevation suite was integrated. The source commit was `4843cc734c126e2f259d9806c3bad18c659fdd05`.
+
+---
+
+## Historical main session — M4 elevations (2026-10-12)
+
+Added `src/geometry/elevation.ts` and `src/ui/ElevationView.tsx`: generated north/south/east/west projections from canonical-derived geometry, level datums, read-only view tabs and ribbon commands. Added five projection unit tests and `e2e/slice5.e2e.mjs` (11 checks). At that point, upstream main reported 94 unit tests and 62 browser checks.
+
+---
+
+## Earlier historical session — M0–M3 foundation and schema v4
+
+Earlier work implemented schema v3 materials/floors/rooms/columns, the professional workspace and schema v4 ceilings/hip roofs. At that stage the model was at 89 unit tests and 51 browser checks (17/11/14/9 across slices 1–4); wall material editing and the slice-5 elevation suite were added later.
+
+## Earlier historical session — Slice 1
+
+Implemented the initial integer-mm BIM model with hosted doors/windows, plan and 3D views, undo/redo, autosave and project JSON. See historical decisions in [`DECISIONS.md`](DECISIONS.md).
