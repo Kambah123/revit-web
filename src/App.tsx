@@ -1,239 +1,365 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { NumberField } from "./ui/NumberField";
-import { RenameField } from "./ui/RenameField";
-import { BimScene, type ToolMode } from "./viewer/BimScene";
-import { distance } from "./model/geometry";
+import { useEffect, useReducer, useRef, useState } from "react";
+import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
 import {
   addLevel,
+  addOpening,
   addWall,
-  createProject,
-  levelById,
-  parseProject,
-  removeLevel,
-  removeWall,
+  deleteLevel,
+  deleteOpening,
+  deleteWall,
   renameLevel,
-  serializeProject,
+  setLevelElevation,
+  updateOpening,
   updateWall,
-  wallsOnLevel,
-} from "./model/project";
-import type { Project, Vec2 } from "./model/types";
+  updateWallType,
+} from "./model/commands";
+import { nearestWallEndpoint, nearestWallOnLevel } from "./model/queries";
+import { snapValue } from "./model/geometry";
+import { createProject, levelById, openingById, wallById } from "./model/project";
+import { parseProject, serializeProject } from "./model/schema";
+import type { Point, Project } from "./model/types";
+import { clearAutosave, AUTOSAVE_KEY, readAutosave, writeAutosave, type KeyValueStorage } from "./persistence/autosave";
+import { LevelsPanel } from "./ui/LevelsPanel";
+import { RenameField } from "./ui/RenameField";
+import { PropertiesPanel } from "./ui/PropertiesPanel";
+import { BimScene, type Selection, type Tool, type ViewMode } from "./viewer/BimScene";
 
-const SNAP_OPTIONS = [0, 0.1, 0.5, 1];
+interface Message {
+  kind: "info" | "error";
+  text: string;
+}
+
+/** Radius in mm within which a wall endpoint snaps to an existing endpoint, so walls join. */
+const JOIN_SNAP_RADIUS_MM = 150;
+/** Maximum distance in mm from a wall centreline for a door or window click to host in it. */
+const HOST_PICK_DISTANCE_MM = 600;
+const SNAP_OPTIONS = [0, 50, 100, 500, 1000];
+
+function getStorage(): KeyValueStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function loadInitial(): { project: Project; message: Message | null } {
+  const storage = getStorage();
+  if (storage) {
+    const read = readAutosave(storage);
+    if (read.status === "ok") return { project: read.project, message: { kind: "info", text: "Recovered your autosaved project." } };
+    if (read.status === "invalid") {
+      // Keep the unreadable data so it can be inspected, then start fresh.
+      storage.setItem(`${AUTOSAVE_KEY}:unreadable`, read.raw);
+      clearAutosave(storage);
+      return {
+        project: createProject(),
+        message: { kind: "error", text: `The autosaved project could not be recovered (${read.message}). A copy was kept.` },
+      };
+    }
+  }
+  return { project: createProject(), message: null };
+}
 
 export function App() {
-  const [project, setProject] = useState<Project>(() => createProject("Untitled project"));
-  const [tool, setTool] = useState<ToolMode>("select");
-  const [activeLevelId, setActiveLevelId] = useState<string | null>(project.levels[0]?.id ?? null);
-  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
-  const [pendingStart, setPendingStart] = useState<Vec2 | null>(null);
-  const [cursor, setCursor] = useState<Vec2 | null>(null);
-  const [snapStep, setSnapStep] = useState(0.1);
-  const [message, setMessage] = useState<{ kind: "info" | "error"; text: string } | null>(null);
-  const [newLevelName, setNewLevelName] = useState("");
-  const [newLevelElevation, setNewLevelElevation] = useState(3);
+  const [initial] = useState(loadInitial);
+  const [hist, dispatchHist] = useReducer(historyReducer, initial.project, initialHistory);
+  const project = hist.present;
+
+  const [tool, setTool] = useState<Tool>("select");
+  const [view, setView] = useState<ViewMode>("plan");
+  const [activeLevelId, setActiveLevelId] = useState<string>(project.levels[0].id);
+  const [selectionState, setSelection] = useState<Selection>(null);
+  const [pendingStart, setPendingStart] = useState<Point | null>(null);
+  const [cursor, setCursor] = useState<Point | null>(null);
+  const [snapStep, setSnapStep] = useState(100);
+  const [message, setMessage] = useState<Message | null>(initial.message);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BimScene | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Latest state for scene callbacks, which are created once and must not go stale.
-  const latest = useRef({ project, tool, activeLevelId, pendingStart });
-  latest.current = { project, tool, activeLevelId, pendingStart };
+  // The active level and selection are checked against the project, so undo or deletion cannot leave them dangling.
+  const activeId = levelById(project, activeLevelId) ? activeLevelId : project.levels[0].id;
+  const selection = validSelection(project, selectionState);
+  const activeLevel = levelById(project, activeId);
 
-  const selectedWall = useMemo(
-    () => project.walls.find((w) => w.id === selectedWallId) ?? null,
-    [project.walls, selectedWallId],
-  );
-  const activeLevel = activeLevelId ? levelById(project, activeLevelId) ?? null : null;
+  const say = (text: string, kind: Message["kind"] = "info") => setMessage({ kind, text });
 
-  const say = (text: string, kind: "info" | "error" = "info") => setMessage({ kind, text });
+  /** Runs a model command. On success the result is committed to history; on failure the model is untouched. */
+  function run(label: string, edit: (p: Project) => Project, okText?: string): boolean {
+    try {
+      dispatchHist({ type: "commit", label, project: edit(project) });
+      if (okText) say(okText);
+      return true;
+    } catch (error) {
+      say(error instanceof Error ? error.message : "That change could not be made.", "error");
+      return false;
+    }
+  }
 
-  // Create the scene once.
+  // Handlers for the scene read the latest state through this ref, because the scene is created once.
+  const ctx = useRef({ project, tool, activeId, pendingStart, snapStep, run });
+  ctx.current = { project, tool, activeId, pendingStart, snapStep, run };
+
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const scene = new BimScene(container, {
-      onPlanClick: (point) => {
-        const { project: p, tool: t, activeLevelId: lvl, pendingStart: start } = latest.current;
-        if (t !== "wall" || !lvl) return;
-        if (!start) {
-          setPendingStart(point);
-          say("Click the end point of the wall. Esc cancels.");
-          return;
-        }
-        if (distance(start, point) < 0.05) {
-          say("Wall is too short. Click a point further away.", "error");
-          return;
-        }
-        try {
-          const result = addWall(p, lvl, start, point);
-          setProject(result.project);
-          setSelectedWallId(null);
-          // Chain walls like Revit: the end point becomes the next start.
-          setPendingStart(point);
-          say("Wall added. Keep clicking to chain walls, or press Esc to finish.");
-        } catch (error) {
-          say(error instanceof Error ? error.message : "Could not add wall.", "error");
+    if (!containerRef.current) return;
+    const scene = new BimScene(containerRef.current, {
+      onPlanClick: (point) => handlePlanClick(point),
+      onPlanMove: (point) => {
+        if (ctx.current.tool === "wall") {
+          setCursor(snapToEndpoint(point));
         }
       },
-      onPlanMove: (point) => setCursor(point),
-      onWallPick: (wallId) => {
-        if (latest.current.tool !== "select") return;
-        setSelectedWallId(wallId);
+      onPick: (picked) => {
+        if (ctx.current.tool === "select") setSelection(picked);
       },
     });
     sceneRef.current = scene;
+
+    // Test hook, available in development builds only: lets end-to-end tests read the model and locate points on screen.
+    if (import.meta.env.DEV) {
+      window.__revitWeb = {
+        project: () => ctx.current.project,
+        screenOf: (p) => scene.planToScreen(p),
+        meshCount: () => scene.meshCount(),
+        view: () => scene.currentView(),
+      };
+    }
     return () => {
       scene.dispose();
       sceneRef.current = null;
+      if (import.meta.env.DEV) delete window.__revitWeb;
     };
+    // The handlers above use ctx and stable setters, so the scene is created once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => sceneRef.current?.setProject(project), [project]);
+  useEffect(() => sceneRef.current?.setActiveLevel(activeId), [activeId, project]);
+  useEffect(() => sceneRef.current?.setSelection(selection), [selection]);
+  useEffect(() => sceneRef.current?.setTool(tool), [tool]);
+  useEffect(() => sceneRef.current?.setView(view), [view]);
+  useEffect(() => sceneRef.current?.setSnapStep(snapStep), [snapStep]);
   useEffect(() => {
-    sceneRef.current?.setProject(project);
+    sceneRef.current?.setPreview(tool === "wall" ? pendingStart : null, tool === "wall" ? cursor : null);
+  }, [pendingStart, cursor, tool]);
+
+  // Autosave after edits settle, so that a reload recovers the latest model.
+  useEffect(() => {
+    const storage = getStorage();
+    if (!storage) return;
+    const handle = window.setTimeout(() => {
+      try {
+        writeAutosave(storage, project);
+      } catch {
+        say("Autosave failed. Save the project to keep your work.", "error");
+      }
+    }, 400);
+    return () => window.clearTimeout(handle);
   }, [project]);
-
-  useEffect(() => {
-    sceneRef.current?.setActiveLevel(activeLevelId);
-  }, [activeLevelId, project]);
-
-  useEffect(() => {
-    sceneRef.current?.setSelectedWall(selectedWall?.id ?? null);
-  }, [selectedWall]);
-
-  useEffect(() => {
-    sceneRef.current?.setSnapStep(snapStep);
-  }, [snapStep]);
-
-  useEffect(() => {
-    sceneRef.current?.setMode(tool);
-    setPendingStart(null);
-    setCursor(null);
-  }, [tool]);
-
-  useEffect(() => {
-    sceneRef.current?.setPreview(pendingStart, cursor);
-  }, [pendingStart, cursor]);
 
   // Keyboard shortcuts.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, select")) return;
-      if (event.key === "Escape") {
-        if (latest.current.pendingStart) {
+      const mod = event.ctrlKey || event.metaKey;
+      if (mod && !event.shiftKey && (event.key === "z" || event.key === "Z")) {
+        event.preventDefault();
+        undo();
+      } else if (mod && (event.key === "y" || event.key === "Y" || (event.shiftKey && (event.key === "z" || event.key === "Z")))) {
+        event.preventDefault();
+        redo();
+      } else if (mod) {
+        return;
+      } else if (event.key === "Escape") {
+        if (ctx.current.pendingStart) {
           setPendingStart(null);
           say("Wall chain finished.");
         } else {
-          setTool("select");
+          changeTool("select");
+          setSelection(null);
         }
-      } else if (event.key === "w" || event.key === "W") {
-        setTool("wall");
-      } else if (event.key === "s" || event.key === "S") {
-        setTool("select");
-      } else if (event.key === "Delete" || event.key === "Backspace") {
-        if (selectedWallId) deleteSelectedWall();
-      }
+      } else if (event.key === "w" || event.key === "W") changeTool("wall");
+      else if (event.key === "d" || event.key === "D") changeTool("door");
+      else if (event.key === "n" || event.key === "N") changeTool("window");
+      else if (event.key === "s" || event.key === "S") changeTool("select");
+      else if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedWallId]);
+  });
 
-  function deleteSelectedWall() {
-    if (!selectedWallId) return;
-    setProject((p) => removeWall(p, selectedWallId));
-    setSelectedWallId(null);
-    say("Wall deleted.");
+  function changeTool(next: Tool) {
+    setTool(next);
+    setPendingStart(null);
+    setCursor(null);
   }
 
-  function handleAddLevel() {
-    try {
-      const result = addLevel(project, newLevelName, newLevelElevation);
-      setProject(result.project);
-      setActiveLevelId(result.level.id);
-      setNewLevelName("");
-      say(`Added ${result.level.name}.`);
-    } catch (error) {
-      say(error instanceof Error ? error.message : "Could not add level.", "error");
+  function undo() {
+    if (!canUndo(hist)) return say("Nothing to undo.");
+    const label = hist.past[hist.past.length - 1].label;
+    setPendingStart(null);
+    dispatchHist({ type: "undo" });
+    say(`Undid: ${label}.`);
+  }
+
+  function redo() {
+    if (!canRedo(hist)) return say("Nothing to redo.");
+    const label = hist.future[0].label;
+    setPendingStart(null);
+    dispatchHist({ type: "redo" });
+    say(`Redid: ${label}.`);
+  }
+
+  function snapToEndpoint(point: Point): Point {
+    const c = ctx.current;
+    return nearestWallEndpoint(c.project, c.activeId, point, JOIN_SNAP_RADIUS_MM) ?? point;
+  }
+
+  function handlePlanClick(point: Point) {
+    const c = ctx.current;
+    if (c.tool === "wall") {
+      const start = c.pendingStart;
+      const at = snapToEndpoint(point);
+      if (!start) {
+        setPendingStart(at);
+        say("Click the next point. Esc finishes the chain.");
+        return;
+      }
+      if (c.run("Add wall", (p) => addWall(p, c.activeId, start, at, { wallTypeId: p.wallTypes[0]?.id }).project)) {
+        setPendingStart(at);
+        setSelection(null);
+        say("Wall added. Keep clicking to chain walls, or press Esc to finish.");
+      }
+      return;
+    }
+    if (c.tool === "door" || c.tool === "window") {
+      const kind = c.tool;
+      const nearest = nearestWallOnLevel(c.project, c.activeId, point, HOST_PICK_DISTANCE_MM);
+      if (!nearest) {
+        say(`Click closer to a wall on ${levelById(c.project, c.activeId)?.name ?? "this level"} to place a ${kind}.`, "error");
+        return;
+      }
+      const type = c.project.openingTypes.find((t) => t.kind === kind);
+      if (!type) return say(`No ${kind} type is available.`, "error");
+      const offset = snapValue(nearest.offset, c.snapStep);
+      let created: string | null = null;
+      const ok = c.run(
+        `Add ${kind}`,
+        (p) => {
+          const result = addOpening(p, nearest.wall.id, type.id, offset);
+          created = result.opening.id;
+          return result.project;
+        },
+        `${kind === "door" ? "Door" : "Window"} placed. Select it to edit its offset.`,
+      );
+      if (ok && created) setSelection({ kind: "opening", id: created });
     }
   }
 
-  function handleDeleteLevel(levelId: string) {
-    const level = levelById(project, levelId);
-    if (!level) return;
-    const count = wallsOnLevel(project, levelId).length;
-    const warning = count > 0 ? ` and its ${count} wall(s)` : "";
-    if (!window.confirm(`Delete ${level.name}${warning}?`)) return;
+  function deleteSelection() {
+    if (!selection) return;
+    if (selection.kind === "wall") {
+      if (run("Delete wall", (p) => deleteWall(p, selection.id), "Wall deleted (its doors and windows too).")) setSelection(null);
+    } else {
+      if (run("Delete opening", (p) => deleteOpening(p, selection.id), "Door or window deleted.")) setSelection(null);
+    }
+  }
+
+  function handleAddLevel(name: string, elevation: number) {
+    if (!name.trim()) return say("Enter a level name first.", "error");
+    let created: string | null = null;
+    const ok = run(
+      "Add level",
+      (p) => {
+        const result = addLevel(p, name, elevation);
+        created = result.level.id;
+        return result.project;
+      },
+      `Added ${name.trim()}.`,
+    );
+    if (ok && created) setActiveLevelId(created);
+  }
+
+  function handleOpen(file: File) {
+    file
+      .text()
+      .then((text) => {
+        const loaded = parseProject(text);
+        dispatchHist({ type: "reset", project: loaded });
+        setActiveLevelId(loaded.levels[0].id);
+        setSelection(null);
+        setPendingStart(null);
+        say(`Opened ${file.name}.`);
+      })
+      .catch((error: unknown) => say(error instanceof Error ? error.message : "Could not open file.", "error"))
+      .finally(() => {
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      });
+  }
+
+  function handleSave() {
     try {
-      const next = removeLevel(project, levelId);
-      setProject(next);
-      if (activeLevelId === levelId) setActiveLevelId(next.levels[0].id);
-      say(`Deleted ${level.name}.`);
+      const text = serializeProject(project);
+      const blob = new Blob([text], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeName = project.name.replace(/[^a-z0-9-_ ]/gi, "").trim() || "project";
+      link.href = url;
+      link.download = `${safeName}.revit-web.json`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      say(`Saved ${link.download}.`);
     } catch (error) {
-      say(error instanceof Error ? error.message : "Could not delete level.", "error");
+      say(error instanceof Error ? error.message : "Could not save.", "error");
     }
   }
 
   function handleNew() {
-    if (project.walls.length > 0 && !window.confirm("Discard the current project and start a new one?")) {
-      return;
-    }
+    if (project.walls.length > 0 && !window.confirm("Discard the current project and start a new one?")) return;
     const next = createProject("Untitled project");
-    setProject(next);
+    dispatchHist({ type: "reset", project: next });
     setActiveLevelId(next.levels[0].id);
-    setSelectedWallId(null);
+    setSelection(null);
+    setPendingStart(null);
     say("Started a new project.");
-  }
-
-  function handleSave() {
-    const blob = new Blob([serializeProject(project)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const safeName = project.name.replace(/[^a-z0-9-_ ]/gi, "").trim() || "project";
-    link.href = url;
-    link.download = `${safeName}.revit-web.json`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    say(`Saved ${link.download}.`);
-  }
-
-  async function handleOpen(file: File) {
-    try {
-      const loaded = parseProject(await file.text());
-      setProject(loaded);
-      setActiveLevelId(loaded.levels[0].id);
-      setSelectedWallId(null);
-      say(`Opened ${file.name}.`);
-    } catch (error) {
-      say(error instanceof Error ? error.message : "Could not open file.", "error");
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
   }
 
   const hint =
     tool === "wall"
       ? pendingStart
         ? "Click the next point to continue the wall. Esc finishes."
-        : `Click a start point on ${activeLevel?.name ?? "the active level"}.`
-      : "Click a wall to select it. Drag to orbit, scroll to zoom.";
+        : `Click a start point on ${activeLevel?.name ?? "the active level"}. Ends snap to existing walls.`
+      : tool === "door" || tool === "window"
+        ? `Click near a wall on ${activeLevel?.name ?? "the active level"} to host a ${tool}.`
+        : "Click a wall, door or window to select it. Drag to pan (plan) or orbit (3D).";
 
   return (
     <div className="app">
       <header className="toolbar">
         <div className="brand">revit-web</div>
-        <input
-          className="project-name"
-          aria-label="Project name"
-          value={project.name}
-          onChange={(e) => setProject({ ...project, name: e.target.value })}
-        />
+        <div className="project-name">
+          <RenameField
+            label="Project name"
+            value={project.name}
+            onCommit={(name) => run("Rename project", (p) => ({ ...p, name }))}
+          />
+        </div>
         <div className="group" role="group" aria-label="Tools">
-          <button className={tool === "select" ? "active" : ""} onClick={() => setTool("select")} title="Select (S)">
-            Select
+          {(["select", "wall", "door", "window"] as Tool[]).map((t) => (
+            <button key={t} className={tool === t ? "active" : ""} onClick={() => changeTool(t)} title={shortcutFor(t)}>
+              {labelFor(t)}
+            </button>
+          ))}
+        </div>
+        <div className="group" role="group" aria-label="View">
+          <button className={view === "plan" ? "active" : ""} onClick={() => setView("plan")}>
+            Plan
           </button>
-          <button className={tool === "wall" ? "active" : ""} onClick={() => setTool("wall")} title="Wall (W)">
-            Wall
+          <button className={view === "3d" ? "active" : ""} onClick={() => setView("3d")}>
+            3D
           </button>
         </div>
         <label className="snap">
@@ -241,12 +367,18 @@ export function App() {
           <select value={snapStep} onChange={(e) => setSnapStep(Number(e.target.value))}>
             {SNAP_OPTIONS.map((step) => (
               <option key={step} value={step}>
-                {step === 0 ? "Off" : `${step} m`}
+                {step === 0 ? "Off" : `${step} mm`}
               </option>
             ))}
           </select>
         </label>
         <div className="spacer" />
+        <button onClick={undo} disabled={!canUndo(hist)} title="Undo (Ctrl+Z)">
+          Undo
+        </button>
+        <button onClick={redo} disabled={!canRedo(hist)} title="Redo (Ctrl+Shift+Z)">
+          Redo
+        </button>
         <button onClick={handleNew}>New</button>
         <button onClick={() => fileInputRef.current?.click()}>Open…</button>
         <button onClick={handleSave}>Save</button>
@@ -257,58 +389,31 @@ export function App() {
           hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) void handleOpen(file);
+            if (file) handleOpen(file);
           }}
         />
       </header>
 
       <div className="body">
         <aside className="panel left">
-          <h2>Levels</h2>
-          <ul className="levels">
-            {project.levels.map((level) => (
-              <li key={level.id} className={level.id === activeLevelId ? "active" : ""}>
-                <button className="level-select" onClick={() => setActiveLevelId(level.id)}>
-                  <span className="level-name">{level.name}</span>
-                  <span className="muted">
-                    {level.elevation.toFixed(2)} m · {wallsOnLevel(project, level.id).length} walls
-                  </span>
-                </button>
-                <div className="level-actions">
-                  <RenameField
-                    label={`Rename ${level.name}`}
-                    value={level.name}
-                    onCommit={(name) => {
-                      try {
-                        setProject(renameLevel(project, level.id, name));
-                      } catch (error) {
-                        say(error instanceof Error ? error.message : "Could not rename level.", "error");
-                      }
-                    }}
-                  />
-                  <button
-                    className="danger"
-                    disabled={project.levels.length <= 1}
-                    onClick={() => handleDeleteLevel(level.id)}
-                    title="Delete level"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-          <h3>Add level</h3>
-          <div className="add-level">
-            <input
-              aria-label="New level name"
-              placeholder="Name"
-              value={newLevelName}
-              onChange={(e) => setNewLevelName(e.target.value)}
-            />
-            <NumberField label="Elevation (m)" value={newLevelElevation} onCommit={setNewLevelElevation} />
-            <button onClick={handleAddLevel}>Add level</button>
-          </div>
+          <LevelsPanel
+            project={project}
+            activeLevelId={activeId}
+            onSelect={(id) => {
+              setActiveLevelId(id);
+              setPendingStart(null);
+            }}
+            onAdd={handleAddLevel}
+            onRename={(id, name) => run("Rename level", (p) => renameLevel(p, id, name))}
+            onElevation={(id, mm) => run("Change level elevation", (p) => setLevelElevation(p, id, mm))}
+            onDelete={(id) => {
+              const level = levelById(project, id);
+              if (!window.confirm(`Delete ${level?.name ?? "this level"} and every wall and opening on it?`)) return;
+              if (run("Delete level", (p) => deleteLevel(p, id), `Deleted ${level?.name ?? "level"}.`) && id === activeId) {
+                setActiveLevelId(project.levels.find((l) => l.id !== id)?.id ?? activeId);
+              }
+            }}
+          />
         </aside>
 
         <main className="viewport">
@@ -318,90 +423,31 @@ export function App() {
         </main>
 
         <aside className="panel right">
-          <h2>Properties</h2>
-          {selectedWall ? (
-            <div className="props">
-              <p className="muted">Wall · {levelById(project, selectedWall.levelId)?.name}</p>
-              <label className="field">
-                <span>Level</span>
-                <select
-                  value={selectedWall.levelId}
-                  onChange={(e) => setProject(updateWall(project, selectedWall.id, { levelId: e.target.value }))}
-                >
-                  {project.levels.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <NumberField
-                label="Height (m)"
-                value={selectedWall.height}
-                min={0.01}
-                onCommit={(v) => applyWallPatch({ height: v })}
-              />
-              <NumberField
-                label="Thickness (m)"
-                value={selectedWall.thickness}
-                min={0.01}
-                onCommit={(v) => applyWallPatch({ thickness: v })}
-              />
-              <fieldset>
-                <legend>Start (m)</legend>
-                <NumberField
-                  label="X"
-                  value={selectedWall.start.x}
-                  onCommit={(v) => applyWallPatch({ start: { ...selectedWall.start, x: v } })}
-                />
-                <NumberField
-                  label="Y"
-                  value={selectedWall.start.y}
-                  onCommit={(v) => applyWallPatch({ start: { ...selectedWall.start, y: v } })}
-                />
-              </fieldset>
-              <fieldset>
-                <legend>End (m)</legend>
-                <NumberField
-                  label="X"
-                  value={selectedWall.end.x}
-                  onCommit={(v) => applyWallPatch({ end: { ...selectedWall.end, x: v } })}
-                />
-                <NumberField
-                  label="Y"
-                  value={selectedWall.end.y}
-                  onCommit={(v) => applyWallPatch({ end: { ...selectedWall.end, y: v } })}
-                />
-              </fieldset>
-              <p className="muted">Length: {distance(selectedWall.start, selectedWall.end).toFixed(2)} m</p>
-              <button className="danger wide" onClick={deleteSelectedWall}>
-                Delete wall
-              </button>
-            </div>
-          ) : (
-            <div className="props">
-              <p className="muted">Select a wall to edit its properties.</p>
-              <dl className="stats">
-                <dt>Levels</dt>
-                <dd>{project.levels.length}</dd>
-                <dt>Walls</dt>
-                <dd>{project.walls.length}</dd>
-                <dt>Active level</dt>
-                <dd>{activeLevel?.name ?? "—"}</dd>
-              </dl>
-            </div>
-          )}
+          <PropertiesPanel
+            project={project}
+            selection={selection}
+            onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
+            onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
+            onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
+            onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
+            onDeleteSelection={deleteSelection}
+          />
         </aside>
       </div>
     </div>
   );
+}
 
-  function applyWallPatch(patch: Parameters<typeof updateWall>[2]) {
-    if (!selectedWall) return;
-    try {
-      setProject(updateWall(project, selectedWall.id, patch));
-    } catch (error) {
-      say(error instanceof Error ? error.message : "Invalid value.", "error");
-    }
-  }
+function validSelection(p: Project, selection: Selection): Selection {
+  if (!selection) return null;
+  if (selection.kind === "wall") return wallById(p, selection.id) ? selection : null;
+  return openingById(p, selection.id) ? selection : null;
+}
+
+function labelFor(tool: Tool): string {
+  return { select: "Select", wall: "Wall", door: "Door", window: "Window" }[tool];
+}
+
+function shortcutFor(tool: Tool): string {
+  return { select: "Select (S)", wall: "Wall (W)", door: "Door (D)", window: "Window (N)" }[tool];
 }

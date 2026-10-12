@@ -5,12 +5,14 @@ interface NumberFieldProps {
   value: number;
   step?: number;
   min?: number;
+  /** When true, committed values are rounded to whole numbers (used for millimetre fields). */
+  integer?: boolean;
   onCommit: (value: number) => void;
   disabled?: boolean;
 }
 
 /** A numeric input that commits on Enter or blur, and reverts invalid drafts. */
-export function NumberField({ label, value, step = 0.1, min, onCommit, disabled }: NumberFieldProps) {
+export function NumberField({ label, value, step = 0.1, min, integer = false, onCommit, disabled }: NumberFieldProps) {
   const [draft, setDraft] = useState(String(value));
 
   useEffect(() => {
@@ -23,7 +25,8 @@ export function NumberField({ label, value, step = 0.1, min, onCommit, disabled 
       setDraft(String(value));
       return;
     }
-    if (parsed !== value) onCommit(parsed);
+    const committed = integer ? Math.round(parsed) : parsed;
+    if (committed !== value) onCommit(committed);
   };
 
   return (
