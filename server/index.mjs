@@ -162,7 +162,7 @@ function serveStatic(req, res, pathname) {
   const rel = normalize(decodeURIComponent(pathname)).replace(/^([/\\])+/, "");
   // Never serve or fall back for sensitive segments (.git, .env, dotfiles) or source trees.
   const segments = rel.split(/[/\\]+/).filter(Boolean);
-  const blocked = segments.some((seg) => seg.startsWith(".")) || ["server", "src", "node_modules", "docs", "e2e", "scripts"].includes(segments[0]);
+  const blocked = segments.some((seg) => seg.startsWith(".")) || ["server", "src", "node_modules", "docs", "e2e", "scripts", "api"].includes(segments[0]);
   if (blocked) {
     return sendError(res, 404, "not_found", "Not found.");
   }
