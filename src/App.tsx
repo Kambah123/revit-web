@@ -174,6 +174,7 @@ export function App() {
         project: () => ctx.current.project,
         screenOf: (p) => scene.planToScreen(p),
         meshCount: () => scene.meshCount(),
+        wallColor: (wallId) => scene.wallColor(wallId),
         view: () => (ctx.current.elevation ? "elevation" : scene.currentView()),
       };
     }
@@ -928,6 +929,7 @@ export function App() {
               selection={selection}
               onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
               onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
+              onWallTypeMaterial={(typeId, materialId) => run("Edit wall type material", (p) => updateWallType(p, typeId, { materialId }))}
               onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
               onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
               onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}

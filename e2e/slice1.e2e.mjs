@@ -98,6 +98,16 @@ try {
     await page.keyboard.press("Enter");
     await sleep(120);
   };
+  const selectField = async (labelText, value) => {
+    const handle = await page.evaluateHandle((text) => {
+      const label = [...document.querySelectorAll("label.field")].find((l) => l.textContent.includes(text));
+      return label ? label.querySelector("select") : null;
+    }, labelText);
+    const select = handle.asElement();
+    assert.ok(select, `select field "${labelText}" not found`);
+    await select.select(value);
+    await sleep(150);
+  };
 
   // 1. Fresh start -----------------------------------------------------------
   await page.goto(APP_URL, { waitUntil: "networkidle0", timeout: 60000 });
@@ -202,6 +212,32 @@ try {
   project = await model();
   assert.equal(project.walls[2].height, 3000, "Ctrl+Z undoes");
   step("undo and redo restore exact earlier and later states (buttons and shortcuts)");
+
+  // Wall type materials drive the native Three.js scene and participate in history.
+  await clickPlan(4000, 4000);
+  assert.equal(await page.$eval(".panel.right h2", (el) => el.textContent), "Wall");
+  project = await model();
+  const wallTypeId = project.walls[2].wallTypeId;
+  const wallId = project.walls[2].id;
+  const wallType = project.wallTypes.find((type) => type.id === wallTypeId);
+  const generic = project.materials.find((material) => material.id === wallType.materialId);
+  const wood = project.materials.find((material) => material.name === "Wood");
+  assert.ok(generic && wood, "default and wood materials exist");
+  await selectField("Type material", wood.id);
+  project = await model();
+  assert.equal(project.wallTypes.find((type) => type.id === wallTypeId).materialId, wood.id);
+  assert.equal(project.walls.filter((wall) => wall.wallTypeId === wallTypeId).length, 3);
+  await clickPlan(-8000, -8000); // clear selection so the normal material is rendered
+  assert.equal(await page.evaluate((id) => window.__revitWeb.wallColor(id), wallId), wood.color.toLowerCase());
+  await clickButton("Undo");
+  project = await model();
+  assert.equal(project.wallTypes.find((type) => type.id === wallTypeId).materialId, generic.id);
+  await clickButton("Redo");
+  project = await model();
+  assert.equal(project.wallTypes.find((type) => type.id === wallTypeId).materialId, wood.id);
+  await clickPlan(-8000, -8000);
+  assert.equal(await page.evaluate((id) => window.__revitWeb.wallColor(id), wallId), wood.color.toLowerCase());
+  step("assigns wall type material, renders its colour, and preserves undo/redo");
 
   // 6. 3D view generated from the same model ----------------------------------
   await clickButton("3D");

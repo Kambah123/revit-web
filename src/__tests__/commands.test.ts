@@ -93,6 +93,18 @@ describe("walls", () => {
     expect(() => updateWallType(p1, i.thickWall, { thickness: 0 })).toThrow(/positive/);
   });
 
+  it("assigns wall type materials without changing wall instances", () => {
+    const p0 = freshProject();
+    const i = ids(p0);
+    const wood = p0.materials.find((material) => material.name === "Wood");
+    expect(wood).toBeDefined();
+    const { project: p1 } = addWall(p0, i.level1, { x: 0, y: 0 }, { x: 5000, y: 0 });
+    const p2 = updateWallType(p1, i.thickWall, { materialId: wood!.id });
+    expect(p2.wallTypes.find((type) => type.id === i.thickWall)?.materialId).toBe(wood!.id);
+    expect(p2.walls).toEqual(p1.walls);
+    expect(() => updateWallType(p2, i.thickWall, { materialId: "missing-material" })).toThrow(/missing material/);
+  });
+
   it("deleting a wall deletes its hosted openings in the same command", () => {
     const p0 = freshProject();
     const i = ids(p0);

@@ -1,47 +1,45 @@
 # Known limitations
 
-Kept current every slice. Newest items last within each section. (Session 2026-10-12.)
+Reverified 2026-10-12 (UTC). Current feature boundaries are in [`PRODUCT_SCOPE.md`](PRODUCT_SCOPE.md); Autodesk API/APS limits are in [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
-## Environment
+## Environment, build and dependency audit
 
-- The prompt-supplied Revit UI PDF and screenshot are not present in this environment (see `REFERENCE_AUDIT.md`); requirements were derived from the prompt's descriptions and public Revit UI knowledge.
-- No system Chrome in the sandbox; e2e runs on a portable Chromium extracted from the `@sparticuz/chromium` npm package (testing only), with `CHROME_PATH` still the supported interface elsewhere.
-- The three.js bundle exceeds Vite's 500 kB chunk warning (informational; code-splitting deferred).
+- The UI screenshot/PDF mentioned in the earlier prompt were not present in the reference-audit environment (see [`REFERENCE_AUDIT.md`](REFERENCE_AUDIT.md)); no page-by-page inspection is claimed.
+- No system Chrome/Chromium was available in this sandbox. Browser tests used a temporary `@sparticuz/chromium` binary with NSS/NSPR libraries in `/tmp/al2023/lib`; this package was not added to runtime or lockfile dependencies.
+- `npm run build` succeeds, but Vite warns that the minified main JS chunk is **774.50 kB** (208.81 kB gzip), above its 500 kB advisory threshold. Code splitting has not been attempted.
+- Full `npm audit` reports **13 development-tree vulnerabilities** (3 moderate, 8 high, 2 critical), associated with locked development/test tools such as Vite, Vitest and Puppeteer Core. `npm audit --omit=dev` reports **0 production-dependency vulnerabilities**. Major-version remediation was not attempted in this feature-focused change; keep the dev server private and schedule dependency upgrades separately.
 
 ## Model and geometry
 
-- Wall joins are detected only where endpoints coincide exactly. T-joins and mitered corners are rendered by overlapping boxes.
-- Openings are rectangular and only in straight walls; no arched openings.
-- Wall height is a single value; no base/top offsets; no layered (compound) wall assemblies.
-- Floor/room boundaries are explicit user-drawn polylines; rooms are not auto-bounded by walls yet; no shaft/openings in floors yet; no sloped floors.
-- Columns are rectangular only; no rotation parameter yet; no round/steel sections.
-- Ceilings are horizontal panels (top at a height above their level); no reflected ceiling plan view yet, and ceilings render translucently in plan.
-- Roofs are hip roofs over axis-aligned rectangular footprints only (overhang + rise); no gable ends, no free-form or curved roofs, no slope-as-angle; flat soffit, no fascia; walls do not auto-join to the roof underside.
-- Floor, room, ceiling and roof boundaries cannot be re-edited after creation (delete + redraw).
-- Stairs, railings, ramps, curtain walls, grids, reference planes: not yet implemented.
-- Room area is polygon shoelace area (not net-of-walls).
+- Wall joins are detected at coincident endpoints only. T-joins and mitered corners are rendered by overlapping boxes.
+- Openings are rectangular and only in straight walls; no arched openings or door-swing family geometry.
+- Wall height is one value; no base/top offsets or compound/layered wall assemblies.
+- Floor/room boundaries are explicit user-drawn polygons; rooms are not auto-bounded by walls. Floor openings and sloped floors are not implemented.
+- Columns are unrotated rectangles only; no round/steel sections or structural framing semantics.
+- Ceilings are horizontal panels at a level-relative height; no reflected ceiling plan view. Ceilings render translucently in plan.
+- Roofs are hip roofs over axis-aligned rectangular footprints (overhang + rise) only; no gable/free-form/curved roofs, angle-defined slopes, fascia or automatic wall-to-roof joins.
+- Floor, room, ceiling and roof boundaries cannot be re-edited after creation; delete and redraw.
+- Stairs, railings, ramps, curtain walls, grids, reference planes, terrain, phases and design options are not implemented.
+- Room area is polygon shoelace area, not net of walls or derived from room-bounding topology.
+- App IDs are opaque local IDs. Validation checks uniqueness within collections, not across every collection. Any future global-ID rule needs a migration/audit before old projects are rejected.
+- Built-in material records carry display color only. There is no general material-library CRUD, Revit appearance asset or thermal/structural property model. Wall material selection is type-level; it changes displayed color, not engineering behavior.
 
-## Views
+## Views and workspace
 
-- One plan view per active level with a fixed 1200 mm cut plane; no view ranges, RCP or sections yet.
-- Plan symbology is basic: no door swings, break lines, or hatching (room floors show translucent fill only).
-- Elevations (N/S/E/W) are generated silhouettes: flat fills, no hatching/material patterns, no hidden-line depth; sections and callouts not yet.
-- No dimensions, text, tags, symbols, callouts, view templates or visibility filters yet.
-- Undo history is in memory and is not saved with the project.
+- One plan per level with a fixed 1200 mm cut plane; no view ranges, reflected ceiling plans or sections yet.
+- Elevations (north/south/east/west) are generated read-only silhouettes from derived geometry: flat fills, no hatching/material patterns or hidden-line depth. They are not persisted Revit-style views.
+- Plan symbology is basic: no door swings, break lines, detailed hatching, dimensions, text, tags, symbols, callouts, view templates or visibility filters.
+- View scale/detail/visual style/shadow options are view-session state, not saved as view records/templates.
+- Ribbon/workspace exists with 11 tabs, but most commands in Structure/Steel/Insert/Annotate/Analyze/Massing/Collaborate/Manage/Add-Ins remain disabled with explanatory “Not implemented yet” tooltips.
+- Some unselected objects can be hard to distinguish when their assigned display material matches their surroundings; selection highlighting remains available.
 
-## Persistence
+## Persistence and interoperability
 
-- Autosave holds one slot in local storage; no recovery versions.
-- Project format is revit-web JSON only; DXF/PDF/IFC/BCF/CSV/GLB exporters not yet implemented.
+- Undo history is in memory and is not saved in the project file. Autosave has one browser-local storage slot; there is no recovery history, backend or cloud sync.
+- `revit-web` JSON schema v4 is the only implemented project format. v1/v2/v3 migrate to v4. DXF, PDF, IFC, BCF, CSV/XLSX and GLB import/export are not implemented.
+- Native RVT read/write is not implemented; no Revit parser/runtime or APS job is present. A Model Derivative/Viewer derivative would be read-only external viewing/metadata, not editable native BIM elements.
 
-## Workspace
+## Engineering and external services
 
-- Ribbon exists with 11 tabs; most commands on Structure/Steel/Insert/Annotate/Analyze/Massing/Collaborate/Manage/Add-Ins are visibly disabled with "Not implemented yet" tooltips (they become real as roadmap milestones land).
-- Room name/number, floors etc. have no boundary re-editing after creation (boundary sketch editing arrives with sketch tools in M6); delete + redraw is the current workflow.
-- Unselected columns render in the type's material colour and can be hard to distinguish against a same-coloured floor (grey-on-grey); selection highlight is clear.
-- View scale/detail/visual style/shadows are per-session view state, not stored per saved view (view templates arrive later).
-- Undo history is still in memory only; autosave is one slot.
-
-## Engineering
-
-- No structural or MEP engineering, no calculations, no code-compliance features. Nothing in the app claims compliance.
+- No structural or MEP engineering, analysis or code-compliance features. Nothing in the app claims structural adequacy or regulatory compliance.
+- APS/Autodesk dependencies and credentials are not part of the app. The optional viewer POC is no-go until sample-file rights, privacy/retention, server-side secret handling, short-lived viewer-token policy and a spend cap are approved. Published APS rate assumptions are dated; reconfirm before a paid run.

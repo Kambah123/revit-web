@@ -4,7 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { clipSolid, PLAN_CUT_HEIGHT_MM, projectGeometry, type OpeningVoid, type Solid } from "../geometry/wallSolids";
 import { ceilingSlabs, columnSolids, floorSlabs, roomFaces, roofSolids, type CeilingSlab, type FloorSlab, type RoomFace, type RoofSolid } from "../geometry/elementGeometry";
 import { snapPoint } from "../model/geometry";
-import { levelById, materialById } from "../model/project";
+import { levelById, materialById, wallTypeById } from "../model/project";
 import type { Point, Polygon, Project } from "../model/types";
 
 export type ViewMode = "plan" | "3d";
@@ -506,7 +506,24 @@ export class BimScene {
     if (solid.role === "wall" && solid.wallId === selectedWallId) return this.materials.selected;
     if (solid.role === "door-leaf") return this.materials.doorLeaf;
     if (solid.role === "window-glass") return this.materials.glass;
-    return onActiveLevel ? this.materials.wall : this.materials.wallBelow;
+    if (!onActiveLevel) return this.materials.wallBelow;
+    if (solid.role === "wall" && this.project) {
+      const wall = this.project.walls.find((item) => item.id === solid.wallId);
+      const wallType = wall && wallTypeById(this.project, wall.wallTypeId);
+      return this.materialForColor(this.typeMaterialColor(wallType?.materialId), COLOR.wall);
+    }
+    return this.materials.wall;
+  }
+
+  /** Actual rendered colour for a wall; exposed only through the development e2e hook. */
+  wallColor(wallId: string): string | null {
+    const mesh = this.modelGroup.children.find(
+      (child): child is THREE.Mesh => child instanceof THREE.Mesh && child.userData.wallId === wallId,
+    );
+    const material = mesh && (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material);
+    return material instanceof THREE.MeshStandardMaterial
+      ? `#${material.color.getHexString(THREE.SRGBColorSpace)}`
+      : null;
   }
 
   private addSolid(group: THREE.Group, s: Solid, material: THREE.Material, userData: PickUserData): THREE.Mesh {
