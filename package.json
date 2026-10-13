@@ -12,6 +12,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "test": "vitest run",
     "test:ai-manual": "node server/manualTest.mjs",
+    "mock:model": "node server/mockModel.mjs",
     "e2e": "node e2e/slice1.e2e.mjs",
     "e2e:ai": "node e2e/slice6-ai.e2e.mjs",
     "e2e:all": "npm run e2e && node e2e/slice2.e2e.mjs && node e2e/slice3.e2e.mjs && node e2e/slice4.e2e.mjs && node e2e/slice5.e2e.mjs && node e2e/slice6-ai.e2e.mjs",

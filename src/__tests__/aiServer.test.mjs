@@ -151,6 +151,77 @@ describe("ai server", () => {
     assert.equal(mock.seen.length, 0);
   });
 
+  it("forwards a validation-repair block to the model and samples it at temperature 0", async () => {
+    behaviour = (req, res) => mockContent(res, VALID_PLAN);
+    mock.seen.length = 0;
+    const rejected = {
+      kind: "design-plan",
+      version: 1,
+      summary: "Bad window placement.",
+      operations: [
+        { op: "wall.add", opId: "w1", level: { name: "Level 1" }, start: { x: 0, y: 0 }, end: { x: 3000, y: 0 }, height: 2700 },
+        { op: "opening.add", opId: "win1", kind: "window", hostWall: { opId: "w1" }, offset: 2500, width: 2000, height: 1200, sillHeight: 900 },
+      ],
+    };
+    const res = await post("/api/ai/plan", {
+      message: "Add a window to the north wall.",
+      repair: {
+        plan: rejected,
+        errors: ["operation 2 (opening.add): the opening does not fit inside its host wall"],
+      },
+    });
+
+    expect(res.status).toBe(200);
+    assert.equal(mock.seen.length, 1);
+    const messages = mock.seen[0].body.messages;
+    const userMessage = messages[messages.length - 1].content;
+    assert.ok(userMessage.includes("VALIDATION REPAIR REQUEST"));
+    assert.ok(userMessage.includes("operation 2 (opening.add)"));
+    assert.ok(userMessage.includes('"offset":2500'), "the rejected json is echoed back as data");
+    assert.ok(userMessage.includes("USER REQUEST:\nAdd a window to the north wall."));
+    // Deterministic fixing, not creative redesign.
+    assert.equal(mock.seen[0].body.temperature, 0);
+    // The validated system prompt tells the model how to behave on a repair request.
+    assert.ok(messages[0].content.includes("REPAIR REQUESTS"));
+  });
+
+  it("keeps the configured temperature for ordinary requests", async () => {
+    behaviour = (req, res) => mockContent(res, VALID_PLAN);
+    mock.seen.length = 0;
+    const res = await post("/api/ai/plan", { message: "Add a wall." });
+    expect(res.status).toBe(200);
+    assert.equal(mock.seen[0].body.temperature, 0.2);
+  });
+
+  it("rejects malformed repair blocks before contacting DeepSeek", async () => {
+    behaviour = (req, res) => mockContent(res, VALID_PLAN);
+    mock.seen.length = 0;
+
+    let res = await post("/api/ai/plan", { message: "hi", repair: "fix it" });
+    assert.equal(res.status, 400);
+
+    res = await post("/api/ai/plan", { message: "hi", repair: { plan: { kind: "design-plan" }, errors: [] } });
+    assert.equal(res.status, 400);
+
+    res = await post("/api/ai/plan", { message: "hi", repair: { plan: "not a plan", errors: ["boom"] } });
+    assert.equal(res.status, 400);
+
+    res = await post("/api/ai/plan", { message: "hi", repair: { plan: { kind: "design-plan" }, errors: ["", "boom"] } });
+    assert.equal(res.status, 400);
+
+    res = await post("/api/ai/plan", { message: "hi", repair: { plan: { kind: "design-plan" }, errors: ["b".repeat(501)] } });
+    assert.equal(res.status, 400);
+
+    res = await post("/api/ai/plan", {
+      message: "hi",
+      repair: { plan: { blob: "x".repeat(40_100) }, errors: ["boom"] },
+    });
+    assert.equal(res.status, 400);
+
+    assert.equal(mock.seen.length, 0);
+    assert.equal((await post("/api/ai/plan", { message: "hi" })).status, 200);
+  });
+
   it("maps upstream failures to safe typed errors and never leaks the key", async () => {
     behaviour = (req, res) => {
       res.writeHead(401, { "Content-Type": "application/json" });

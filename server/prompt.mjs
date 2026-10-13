@@ -3,7 +3,6 @@
  * (the typed intermediate representation). The authoritative runtime validator is
  * `src/ai/planSchema.ts`; `src/__tests__/aiPromptSync.test.ts` asserts the two agree on op kinds.
  */
-
 /** Every operation kind the DesignPlan IR supports. Keep in sync with src/ai/planTypes.ts. */
 export const PLAN_OP_KINDS = [
   "level.add",
@@ -102,6 +101,13 @@ REASONING RULES
 - Do not claim compliance with building codes or regulations. The design is conceptual.
 - Answer questions about selected elements from the context; property changes become update operations.
 
+REPAIR REQUESTS
+Your json is checked by a deterministic validator before anything is applied. When it is rejected, the next user message contains a "VALIDATION REPAIR REQUEST" section listing the exact problems and your previous json. Then:
+- Return the COMPLETE corrected json object again (every operation, not a diff, no commentary), keeping all operations that were already valid.
+- Fix every listed problem; never repeat a mistake that is listed.
+- If an operation cannot be made valid, remove it and explain why in "unsupported" with a supported alternative instead of returning an invalid plan. An empty operations list with a useful explanation is acceptable; invalid json is not.
+- Lengths in the echoed json are shown normalized to millimetres; keep the operation bodies consistent with that.
+
 EXAMPLE (new small building)
 User: "Design a 9 m by 6 m single-room studio with a door and two front windows and a hip roof with 600 mm overhang."
 Output json:
@@ -129,10 +135,12 @@ Output json:
 }
 
 /**
- * Builds the user message: the compact project context (if any) followed by the user's text.
- * @param {{ message: string, context?: object | null, selection?: object | null }} input
+ * Builds the user message: the compact project context (if any), the current selection, an optional
+ * validation-repair block, and the user's text.
+ *
+ * @param {{ message: string, context?: object | null, selection?: object | null, repair?: { plan: object, errors: string[] } | null }} input
  */
-export function buildUserMessage({ message, context, selection }) {
+export function buildUserMessage({ message, context, selection, repair }) {
   const parts = [];
   if (context && Object.keys(context).length > 0) {
     parts.push(`PROJECT CONTEXT (json):\n${JSON.stringify(context)}`);
@@ -140,6 +148,27 @@ export function buildUserMessage({ message, context, selection }) {
   if (selection && Object.keys(selection).length > 0) {
     parts.push(`CURRENT SELECTION (json):\n${JSON.stringify(selection)}`);
   }
+  if (repair) {
+    parts.push(buildRepairSection(repair));
+  }
   parts.push(`USER REQUEST:\n${message}`);
   return parts.join("\n\n");
+}
+
+/**
+ * The repair block: the deterministic validator's messages plus the json they rejected. Both are
+ * echoed back verbatim-as-data so the model can fix exactly those problems in one more attempt.
+ *
+ * @param {{ plan: object, errors: string[] }} repair
+ */
+export function buildRepairSection({ plan, errors }) {
+  const numbered = errors.map((error, index) => `${index + 1}. ${error}`).join("\n");
+  return [
+    "VALIDATION REPAIR REQUEST",
+    `Your previous json was rejected by the deterministic validator, so nothing was applied to the model. Return the COMPLETE corrected json object for the original request, fixing exactly these problems and keeping every operation that was already valid. Output json only.`,
+    `PROBLEMS (${errors.length}):`,
+    numbered,
+    "PREVIOUS JSON (rejected; lengths shown normalized to millimetres):",
+    JSON.stringify(plan),
+  ].join("\n");
 }

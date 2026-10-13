@@ -2,6 +2,99 @@
 
 Latest state first. Record only executed commands/results; historical sessions follow current status.
 
+## Session 2026-10-12 (fourth) — AI Architect streaming plans
+
+**Branch:** `arena/45e507a7-revit-web` (continues the previous session on the same branch; repair loop already committed as `c0b4141`).
+
+**Goal (user-chosen):** long plans spent 30–60 s behind "thinking…". Plans now stream, with a cancel
+button, without weakening any validation.
+
+**Transport:** new `POST /api/ai/plan-stream` (server-sent events) next to the buffered route, sharing
+`checkedRequestBody`/`buildMessages`/rate limit/error mapping. Frames: `start` → `delta`* →
+`done`/`error`; the `done` payload is the same envelope as the buffered response, so validation and
+the repair loop never branch on transport. `streamDeepSeek` in `server/deepseek.mjs` (JSON mode +
+`stream_options.include_usage`, status mapping shared with the buffered call). Vercel entry
+`api/ai/plan-stream.mjs`; `AI_STREAM=0` switches streaming off (501 → clients fall back).
+
+**Progress UI:** `src/ai/partialPlan.ts` scans the incoming json incrementally and reports only
+complete operations (tolerant: partial frames, braces inside prose, malformed fragments skipped; the
+finished json still goes through the authoritative validator). The panel shows "N operations so far"
+plus the newest labels, throttled to one repaint per 200 ms, with a Cancel button.
+
+**Cancellation:** the panel aborts the fetch; the server sees the disconnect (`res.on("close")`) and
+aborts the upstream DeepSeek request, so cancelling stops token spend rather than just rendering.
+Cancellation is a status line, never an error card, on both transports (`ai_cancelled`).
+
+**Fallback (deployment resilience):** buffered route used automatically when the stream route is
+missing (404/405), streaming is off (501), the response is not an event stream, nothing arrived, or
+the connection failed. The timeout is an inactivity budget, re-armed on every delta, so a slow but
+live stream is not cut off. An empty stream gets one buffered retry server-side; a stream that already
+delivered text is never silently re-requested (no double charging for half a plan).
+
+**Also:** `npm run mock:model` now speaks SSE when the caller streams, so the whole thing is
+demonstrable offline; the harness is covered by tests.
+
+**Verified:** `tsc --noEmit` clean; **188 unit/integration tests pass** (21 files; +24 over the
+previous session's 164: 8 server SSE, 8 client transport, 7 partial-plan, 1 harness streaming test);
+`npm run build` passes. Live check through the Vite proxy against the mock model: `start` + 8 `delta`
+frames (~120 ms apart) + `done`, and the deltas reassemble byte-for-byte into the `done` plan;
+a streamed repair turn reported `repairing: true` and clamped the broken window (offset 9000 → 8350)
+with the fix disclosed in the assumptions.
+
+**Not verified here:** browser e2e — still no Chrome/Chromium in this sandbox. `e2e/slice6-ai.e2e.mjs`
+now asserts that the client tries the stream endpoint first and falls back cleanly (the harness answers
+with an empty event stream, since Puppeteer interception cannot deliver a chunked body). The
+incremental stream card is covered at the protocol level instead, and this limitation is documented in
+`docs/AI_ARCHITECT.md` §11.
+
+**Next ideas (not started):** cost controls (server-side daily token budget, per-project quotas,
+cost-capped escalation to `deepseek-v4-pro` when a plan fails twice); a golden-prompt evaluation
+harness scoring buildability; ghost preview of a proposed plan in the 3D viewport.
+
+---
+
+## Session 2026-10-12 (third) — AI Architect self-repair loop
+
+**Branch/commit at start:** `arena/45e507a7-revit-web` @ `799bbc5` (clean; AI Architect from the previous session already merged).
+
+**Audit finding (the trigger):** the AI's *failure* path was the weak link, not its happy path.
+`retryLast()` claimed "Retrying with validation feedback…" but sent no feedback at all (a re-roll);
+an unbuildable-but-schema-valid plan produced a dead end ("This plan cannot be applied as
+proposed"); and the failed assistant json was truncated to 1 800 chars in history. `usage` was
+returned by the server and thrown away, so nobody could see what a request cost.
+
+**Fix — automatic repair loop (bounded, disclosed, testable):**
+- `src/ai/repair.ts` (new, React-free and injectable): `requestPlanWithAutoRepair` re-asks the model
+  **once** with the deterministic validator's own messages plus the json it rejected. Schema failures
+  and `applyPlan` geometry failures share the same path; `MAX_AUTO_REPAIRS = 1` guarantees no loop;
+  feedback is bounded (12 messages × 300 chars, deduped); the echoed json is the *parsed* plan
+  (lengths normalized to mm) when it parsed, the raw response when it did not.
+- Server: optional `repair { plan, errors }` in `POST /api/ai/plan`, validated (≤20 × 500 chars,
+  json ≤ 40 000 chars) and assembled into a "VALIDATION REPAIR REQUEST" block by `buildRepairSection`;
+  repairs sample at **temperature 0** (`AI_TEMPERATURE` configures ordinary requests, default 0.2);
+  the system prompt documents the contract (complete corrected json, keep valid operations, drop what
+  cannot be valid into `unsupported`).
+- UI: auto-repaired cards are tagged and report what was fixed; failed cards show the failing
+  operation and a "Try to fix" button that sends the same feedback (a real repair, honest label);
+  clarification options became actionable chips that send `Answer to "<question>": <answer>`;
+  provider `usage` is surfaced per plan and per session.
+
+**Verified:** `tsc --noEmit` clean; **163 unit/integration tests pass** (18 files; +21 over the
+pre-session 142: 14 repair-policy/loop tests, 1 end-to-end repair test through the real server with a
+mocked model, 3 server repair tests, 3 prompt/repair-block tests); `npm run build` passes (known
+three.js chunk warning).
+
+**Not verified here:** the two new browser checks in `e2e/slice6-ai.e2e.mjs` (auto-repair with the
+repair request asserted at the network layer, and clarification chips) could not be executed in this
+sandbox — no Chrome/Chromium binary is available (`CHROME_PATH` unset). They follow the existing
+suite's conventions and should be run with `npm run e2e:all` on a machine with Chromium.
+
+**Next ideas (not started):** stream partial plans for long designs; rotate to `deepseek-v4-pro` when
+a plan fails validation twice (cost-aware escalation); server-side daily token budget; a golden-prompt
+evaluation harness with buildability scoring.
+
+---
+
 ## Session 2026-10-12 (second) — DeepSeek AI Architect (slices A–G)
 
 **Branch/commit at start:** `arena/673afcb7-revit-web` @ `9a28692` (clean; slices 1–5 already merged).

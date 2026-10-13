@@ -57,7 +57,8 @@ From the official docs (`api-docs.deepseek.com`) and pricing page:
 The repo had no server, so the smallest maintainable backend was added: a **dependency-free Node
 ESM server** (`server/`) that
 
-1. exposes `POST /api/ai/plan` (and `GET /api/ai/health`),
+1. exposes `POST /api/ai/plan` (buffered), `POST /api/ai/plan-stream` (server-sent events) and
+   `GET /api/ai/health`,
 2. reads `DEEPSEEK_API_KEY` **only** from the server environment,
 3. serves the built SPA (`dist/`) in production alongside the API — one process, one origin,
 4. is proxied by Vite in development (`vite.config.ts` proxies `/api` → `http://127.0.0.1:8787`).
@@ -100,19 +101,29 @@ never recreates the wall.
 ## 5. Request flow
 
 ```
-user prompt ──► POST /api/ai/plan ──► DeepSeek chat/completions (json_object)
-   ▲                │                       │
-   │        request limits, timeout,        │ validated JSON text
-   │        rate limit, no secrets          ▼
-   │                │              plan JSON (untrusted)
-   │                ▼                       │
-   └── UI panel ◄── typed errors      src/ai/planSchema.ts validation
-         │                                  │
-         │  preview: summary + ops          ▼
-         │  Apply / Cancel / Retry   src/ai/applyPlan.ts (transactional:
-         │                            all ops succeed or the model is
-         ▼                            untouched) via model/commands.ts
-   one history commit (undo/redo) + views regenerate + autosave
+user prompt ──► POST /api/ai/plan-stream ──► DeepSeek chat/completions
+   ▲            (or, if unavailable,       (json_object; stream:true on the
+   │             POST /api/ai/plan)         streaming route)
+   │                    │                            │
+   │                    │              start / delta* / done | error   ◄── progress
+   │                    ▼                            ▼
+   │          request limits, timeout,        json text (untrusted)
+   │          rate limit, no secrets                 │
+   │                    │                            ▼
+   │                    │              src/ai/planSchema.ts validation
+   │                    ▼                            │
+   │            typed errors                         ▼
+   │                    │              src/ai/applyPlan.ts (transactional dry run:
+   │                    │              all ops succeed or the model is untouched)
+   │                    │                            │
+   │                    │              rejected? ──► repair request (once) ──┐
+   │                    │                            │                       │
+   │                    │                            ▼                       │
+   │                    │              src/ai/applyPlan.ts on Apply          │
+   └──── UI panel ◄─────┴── preview: summary + ops, Apply / Cancel / Retry ◄─┘
+         │
+         ▼
+   one history commit (undo/redo) + views regenerate + autosave — via model/commands.ts
 ```
 
 Project context sent to the model (`src/ai/context.ts`) is **compact and purpose-built**: level
@@ -120,10 +131,95 @@ names/elevations, type catalogues, an element inventory (id + kind + key dimensi
 selection, active view, supported capabilities. It is never the whole serialized project and never
 contains secrets or unrelated user data.
 
-## 6. Privacy, security and limits
+## 6. Streaming plans (progress you can watch, and cancel)
+
+A large design can take 30–60 s to write, which is a long time to stare at "thinking…". The plan is
+therefore also available as a **server-sent event stream**, and the UI shows operations appearing as
+the model writes them.
+
+```
+POST /api/ai/plan-stream        (same request body as /api/ai/plan, including `repair`)
+  event: start   data: {"model": "...", "repairing": false}
+  event: delta   data: {"text": "{\"kind\":\"design-plan\",..."}     (many)
+  event: done    data: {"plan": {...}, "model": "...", "demo": false, "usage": {...}}
+  event: error   data: {"code": "ai_bad_response", "message": "..."}   (terminal, instead of done)
+```
+
+- **One envelope, two transports.** The `done` payload is identical to the buffered response, and the
+  plan is parsed and sanity-checked server-side in both cases. The client's validator (and the repair
+  loop) never branch on transport: `requestAiPlanStream` returns the same `PlanRequestResult`.
+- **Progressive display, never progressive trust.** `src/ai/partialPlan.ts` scans the incoming json
+  incrementally and reports only *complete* operation objects ("7 operations so far" + the newest
+  labels). It is tolerant by design — partial frames, prose containing braces and malformed fragments
+  are skipped, never thrown — and it is display-only: the finished json still goes through
+  `planSchema.ts` and `applyPlan.ts` before anything is applied.
+- **Fallback is automatic and invisible.** The client uses the buffered route when the stream route
+  is missing (404/405), streaming is switched off (`AI_STREAM=0` → 501), the response is not an event
+  stream, nothing arrived before the connection ended, or the request failed to connect. A deployment
+  that only has `/api/ai/plan` (or a proxy that buffers the stream away) keeps working — users just
+  don't see progress.
+- **The timeout is an inactivity budget.** It is re-armed on every delta, so a slow but live stream is
+  never cut off for being long.
+- **Cancelling stops token spend.** The panel's Cancel aborts the fetch; the server sees the client
+  disconnect (`res.on("close")`) and aborts the upstream DeepSeek request, so a cancelled plan is not
+  paid for in full. Cancellation is reported as a status line ("nothing was applied"), never as an
+  error.
+- **Repairs stream too**, with the same `temperature: 0` rule, so a fix is watched the same way.
+- **Empty streams cost nothing twice.** If the model produced no content at all (a known intermittent
+  JSON-mode behaviour), the server retries once buffered; a stream that already delivered text is
+  never silently re-requested.
+
+## 7. Automatic repair loop (failures are not dead ends)
+
+A plan can be rejected in two places: `planSchema.ts` (the json does not match the IR) and
+`applyPlan.ts` (it parses, but the geometry does not fit the real model). Both used to be terminal
+for the user — they are now a single, bounded, self-correcting round trip.
+
+```
+attempt 1 ──► plan valid?  ── yes ──► preview → Apply
+                  │ no
+                  ▼
+        validator messages + the rejected json (as validated, lengths in mm)
+                  │
+                  ▼
+              attempt 2 (repair, temperature 0)
+                  │
+        valid → the repaired plan replaces the failed one, tagged "auto-repaired" and reported
+        invalid → the failure is shown with per-operation detail and a "Try to fix" button that
+                  sends the very same feedback again (a genuine repair, not a re-roll)
+```
+
+- **One extra request, hard-capped.** `MAX_AUTO_REPAIRS = 1` in `src/ai/repair.ts`; a repair request
+  is never itself auto-repaired, so a prompt cannot loop and cost cannot run away. A repair is only
+  attempted when there is something to report (`buildRepairPayload` returns null when no validator
+  message exists).
+- **The feedback is the validator's own words.** `operation 2 (opening.add): Window 2000 x 1200
+  would fall outside its host wall.` — machine-generated, specific, and already precise enough to fix.
+- **The json echoed back is the json the validator saw**: the *parsed* plan (lengths normalized to
+  integer millimetres) when it parsed, the raw response when it did not. It stays data: the server
+  echoes it into the prompt, never executes it.
+- **Feedback is bounded**: at most 12 messages, 300 characters each, whitespace-collapsed and
+  de-duplicated (`boundRepairErrors`); the server re-validates the same bounds (401/400 on abuse).
+- **Sampling changes for repairs**: `temperature: 0` so the model satisfies the listed problems
+  instead of redesigning (`AI_TEMPERATURE` sets the ordinary value, default 0.2).
+- **Repairs are disclosed, never silent.** The card is tagged `auto-repaired`, names the first fixed
+  problems, and reports how many extra requests it took. Request counts and tokens (session and
+  per plan) are shown in the panel, taken from the provider's `usage`.
+- **Clarifications are actionable.** A plan that asks a question with `options` renders them as
+  chips; clicking one sends `Answer to "<question>": <answer>` as the next turn, so the
+  clarification loop closes without retyping.
+
+The system prompt documents the contract ("REPAIR REQUESTS"): return the complete corrected json,
+keep every operation that was already valid, never repeat a listed mistake, and if an operation
+cannot be made valid, drop it into `unsupported` with an alternative — a smaller valid plan beats an
+invalid one.
+
+## 8. Privacy, security and limits
 
 - `DEEPSEEK_API_KEY` is read from server env only; responses and logs never include it.
 - Request validation: message ≤ 4 000 chars, history ≤ 30 turns, context ≤ 40 000 chars, body ≤ 256 kB.
+- Repair block validation: ≤ 20 messages of ≤ 500 chars each, rejected json ≤ 40 000 chars, echoed as
+  data only. It is untrusted text in the prompt (bounded and never executed), like any user message.
 - Per-IP sliding-window rate limit (default 10 requests/minute, `AI_RATE_LIMIT_PER_MIN`).
 - Upstream timeout (default 60 s, `AI_TIMEOUT_MS`) with `AbortController`; typed error codes:
   `ai_not_configured`, `ai_bad_request`, `ai_rate_limited`, `ai_timeout`, `ai_upstream`,
@@ -133,7 +229,7 @@ contains secrets or unrelated user data.
 - Conceptual-design disclaimers: the UI and the system prompt state that outputs are conceptual
   design, **not** building-code compliance or professional engineering.
 
-## 7. Testing
+## 9. Testing
 
 - `src/__tests__/aiUnits.test.ts` — unit conversion (mm/cm/m/ft/in) and dimension validation.
 - `src/__tests__/aiPlanSchema.test.ts` — plan parsing, malformed/unsupported responses.
@@ -144,10 +240,28 @@ contains secrets or unrelated user data.
   error mapping, API-key protection, demo planner labelling (DeepSeek mocked over local HTTP).
 - `e2e/slice6-ai.e2e.mjs` — browser workflow with the `/api/ai/plan` response mocked at the
   network layer: prompt → preview → apply → real walls/rooms in the canonical model → undo.
+- `src/__tests__/aiRepair.test.ts` — error bounding, repair payloads, and the loop against a fake
+  transport (schema-invalid, unbuildable via the real `applyPlan`, budget exhausted, transport error).
+- `src/__tests__/aiRepairEndToEnd.test.mjs` — the loop across the real boundary: client ⇄ request body ⇄
+  server (validation + prompt assembly) ⇄ mocked DeepSeek, asserting the problems and rejected json
+  reach the model and the repaired plan applies as verified geometry.
+- `src/__tests__/aiPartialPlan.test.ts` — the incremental json scanner: partial frames, prose
+  containing braces, malformed operations, and the safe label fallback.
+- `src/__tests__/aiStream.test.mjs` — the SSE route against a mocking upstream: frame order, the
+  identical `done` envelope, streamed repairs, mid-stream errors, request validation before any
+  stream is opened, the empty-stream buffered retry, and `AI_STREAM=0`.
+- `src/__tests__/aiStreamClient.test.mjs` — the client against the real server: incremental deltas
+  reassembling byte-for-byte, the inactivity timeout, every fallback trigger (no route, 501, empty
+  stream), and that cancelling aborts the upstream request rather than just the rendering.
+- `server/mockModel.mjs` (`npm run mock:model`) — an offline stand-in for the model: it answers a
+  build request with a deliberately rejectable plan and fixes it generically on the repair request,
+  so the whole pipeline (including the repair loop and both transports: it speaks SSE when asked to
+  stream) can be demonstrated and manually inspected without a key or a token budget. Covered by
+  `aiRepairEndToEnd.test.mjs`.
 - `server/manualTest.mjs` — **manual** integration test against the real DeepSeek API
   (`DEEPSEEK_API_KEY` required), never part of the automated suite.
 
-## 8. Environment variables
+## 10. Environment variables
 
 | Variable | Where | Default | Purpose |
 | --- | --- | --- | --- |
@@ -156,12 +270,14 @@ contains secrets or unrelated user data.
 | `DEEPSEEK_BASE_URL` | server | `https://api.deepseek.com` | OpenAI-compatible base URL (tests point this at a mock). |
 | `AI_TIMEOUT_MS` | server | `60000` | Upstream request timeout. |
 | `AI_MAX_TOKENS` | server | `8000` | `max_tokens` for the completion. |
+| `AI_TEMPERATURE` | server | `0.2` | Sampling temperature for ordinary requests (repairs always use 0). |
 | `AI_RATE_LIMIT_PER_MIN` | server | `10` | Per-IP request budget per minute. |
+| `AI_STREAM` | server | on | `0` disables `POST /api/ai/plan-stream` (clients fall back to the buffered route). |
 | `AI_DEMO_PLANNER` | server | off | `1` = serve clearly-labelled deterministic demo plans when no API key is configured (preview/demo environments only). |
 | `PORT` | server | `8787` | HTTP port (API + static SPA in production). |
 | `SERVE_STATIC` | server | on | `0` disables serving `dist/` (API only). |
 
-## 9. Known limitations
+## 11. Known limitations
 
 - Roof generation supports **rectangular hip roofs** only (the engine's only roof type); gable,
   shed, mansard and free-form footprints are reported as `unsupported` with the hip alternative.
@@ -171,3 +287,11 @@ contains secrets or unrelated user data.
   the kitchen larger" resizes the room's boundary and the AI may also move the bounding walls.
 - The model can propose ill-fitting geometry; the executor refuses it with per-operation errors and
   leaves the model untouched (atomic). This is a feature: invalid AI output must never corrupt the BIM.
+- The incremental stream card (operations appearing while the model writes, and the Cancel button) is
+  covered at the protocol level by `aiPartialPlan`/`aiStreamClient` tests, but the browser suite cannot
+  assert it: Puppeteer's request interception delivers a whole body at once, so `e2e/slice6-ai.e2e.mjs`
+  verifies only that the client tries the stream endpoint first and falls back cleanly.
+- Auto-repair fixes *reported* failures (shape and geometry), not judgement: a plan that is valid but
+  architecturally poor still applies, so the preview and the assumptions remain the user's to review.
+  Repairs cost one extra request (and are reported); set `maxAutoRepairs: 0` in `src/ai/repair.ts`
+  callers to disable them.

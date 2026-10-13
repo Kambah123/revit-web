@@ -9,7 +9,7 @@ A browser-based BIM editor with an application-native semantic model and a Three
 - Use per-project element types and built-in display materials; choose a wall type's material and see its colour in the native 3D view.
 - Edit supported element properties, view derived areas/volumes, undo/redo, autosave/recover, and save/open versioned `*.revit-web.json` projects.
 - Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
-- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres or feet); the model proposes a validated, previewed design plan that is applied through the real command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus generated elevations. See [`docs/AI_ARCHITECT.md`](docs/AI_ARCHITECT.md) for setup, security and limits.
+- **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres or feet); the model proposes a validated, previewed design plan that is applied through the real command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus generated elevations. Plans **stream** as they are written (operations appear live, with Cancel that stops the request), and rejected plans are **auto-repaired**: the deterministic validator's own messages and the rejected json go back to the model once, so a plan that fails on a fixable detail arrives fixed and labelled instead of failing. See [`docs/AI_ARCHITECT.md`](docs/AI_ARCHITECT.md) for setup, security and limits.
 
 The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v4; v1/v2/v3 files migrate to v4). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
 
@@ -44,11 +44,25 @@ npm run server                       # http://127.0.0.1:8787 (also AI_DEMO_PLANN
 
 # production: one process serves the built SPA and the API
 npm run build
-npm start                            # serves dist/ + /api/ai/plan on PORT (default 8787)
+npm start                            # serves dist/ + /api/ai/plan (+ /api/ai/plan-stream) on PORT (default 8787)
+```
+
+Requests go to `POST /api/ai/plan-stream` (server-sent events: `start` → `delta`* → `done`/`error`) so
+the panel can show operations as they are written and cancel an in-flight request. When streaming is
+unavailable (`AI_STREAM=0`, no such route, or a proxy that buffers it away) the client automatically
+uses the buffered `POST /api/ai/plan` instead — same envelope, same validation, no user-visible error.
+
+Offline demo of the full pipeline (no API key, no DeepSeek): the mock model answers a design
+request with a plan that is deliberately broken, so you can watch the automatic repair loop fix it.
+
+```bash
+npm run mock:model                                                   # terminal 1: mock model (not an LLM)
+DEEPSEEK_API_KEY=demo DEEPSEEK_BASE_URL=http://127.0.0.1:9999 npm run server   # terminal 2
+npm run dev                                                          # terminal 3: open the app, ask for a studio
 ```
 
 Configuration: `DEEPSEEK_API_KEY` (required), `DEEPSEEK_MODEL` (default `deepseek-flash`),
-`AI_TIMEOUT_MS`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
+`AI_TIMEOUT_MS`, `AI_TEMPERATURE`, `AI_RATE_LIMIT_PER_MIN`, `AI_DEMO_PLANNER`, `PORT`. Full table in
 `docs/AI_ARCHITECT.md`. Manual live-API test (spends tokens): `DEEPSEEK_API_KEY=sk-... npm run test:ai-manual`.
 
 #### Deploying on Vercel
