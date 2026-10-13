@@ -1,0 +1,106 @@
+{
+  "kind": "research-run-record",
+  "date": "2026-10-13",
+  "repository": "Kambah123/revit-web",
+  "commit": "799bbc553cf7d99af6e898f6e13abe2eb0d24bbd",
+  "scope": "REA installation and partial static analysis of our own compiled bundle; no Synaps runtime analysis",
+  "node": "22.22.3",
+  "reaPackage": "rea-agents",
+  "reaVersion": "6.4.0",
+  "npmIntegrity": "sha512-Vj1zWfSlna5bphGoaoI/TcVBuYvze9u+OyPC3Shz8YkBqaCTqB4COnnRoX7XDwMpwI24ZlFEel2yEj0k8LTWEQ==",
+  "setup": {
+    "status": "ready",
+    "appliedActions": [
+      "installed_skill"
+    ]
+  },
+  "skill": {
+    "healthy": true,
+    "identity": {
+      "installed_version": "37",
+      "installed_tool_count": 170,
+      "state": "aligned",
+      "remediation": null
+    },
+    "scopeChecks": [
+      {
+        "name": "node",
+        "ok": true,
+        "classification": "healthy",
+        "detail": "22.22.3"
+      },
+      {
+        "name": "skill:identity",
+        "ok": true,
+        "classification": "healthy",
+        "detail": "Installed REA skill identity is aligned."
+      }
+    ]
+  },
+  "baseline": {
+    "testFilesPassed": 16,
+    "testsPassed": 142,
+    "buildPassed": true,
+    "mainJsKilobytes": 813.65,
+    "gzipKilobytes": 219.96,
+    "browserE2eRun": false,
+    "liveAiRun": false
+  },
+  "artifactFiles": [
+    {
+      "path": "dist/assets/index-DK-mjPrh.css",
+      "sha256": "1c971df93af37b0552195a9a357415ee6f5c3dcc235cc962ab36574e852145f0"
+    },
+    {
+      "path": "dist/assets/index-DZNL7U80.js",
+      "sha256": "beadec22e8ce60a5fc83610348d9993081df95ec69ff982906c6b0140fa1587a"
+    }
+  ],
+  "rea": {
+    "command": "rea analyze-javascript-application /home/user/revit-web/dist --artifact-format directory --analysis-timeout-ms 60000 --json",
+    "evidenceFile": "revit-web-bundle.partial.json",
+    "evidenceFileBytes": 90559,
+    "evidenceFileSha256": "2e2d78e7cb1e9a98871498e48e88a20655b16dc026d0f40abe811bbbfe97ec4e",
+    "evidenceId": "ev_8059c9ea9c562884ccd0d1c2fe0a91491ac2c0d2fd85238e305f2e95887fccc7",
+    "subject": {
+      "name": "dist",
+      "digest": {
+        "sha256": "2d3a7208f3c64222f07804b83e97ff56e9a69b0ebd26e0669c564938f5b70a70"
+      },
+      "format": "directory",
+      "architecture": null,
+      "local_path": "/home/user/revit-web/dist"
+    },
+    "statistics": {
+      "relevant_files": 2,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 814163,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 1,
+      "visited_ast_nodes": 213452,
+      "findings": 22,
+      "modules": 0,
+      "parse_failures": 0
+    },
+    "nodeCount": 20,
+    "edgeCount": 27,
+    "coverage": "partial",
+    "limitations": [
+      "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+      "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+      "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+      "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+      "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code.",
+      "assets/index-DZNL7U80.js: Resource constraint during analyze_javascript_application: Owned JavaScript worker exhausted its heap while analyzing assets/index-DZNL7U80.js during semantic"
+    ]
+  },
+  "warnings": [
+    "CLI completion/exit success does not mean full semantic analysis: the worker exhausted its 1024 MiB old-space heap.",
+    "Only /api/ai/health is retained as a literal fetch endpoint in this partial graph. /api/ai/plan exists in source but its absence from this graph is not proof of runtime absence.",
+    "14 endpoint-labelled .get string observations are graphics-extension names, not verified network endpoints.",
+    "An electron-renderer graph label for an HTML entry does not establish that this browser SPA uses Electron.",
+    "Direct sandbox curl to https://www.synaps.app failed with SSL_ERROR_SYSCALL (curl 35); no live Synaps CDP capture was performed.",
+    "Web fetch of https://beta.synaps.app redirected to the Google sign-in page; no authenticated app access."
+  ]
+}

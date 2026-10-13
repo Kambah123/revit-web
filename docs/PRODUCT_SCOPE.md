@@ -1,5 +1,6 @@
 # Product scope and current feature inventory
 
+> Current update: [Contour milestone 2](CONTOUR_MILESTONE_2.md) replaces the default shell with shadcn/ui and adds manual static dimensions with schema v5 migration. Historical no-dimensions/v4 statements below predate this update.
 **Reverified:** 2026-10-12 (UTC)
 **Repository:** `arena/11b23c70-revit-web`, starting from `ce68041` and now including main's M4 elevation work; canonical model schema v4.
 **Detailed Revit/APS comparison and recommendations:** [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).

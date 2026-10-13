@@ -16,7 +16,7 @@ const CAPABILITIES = {
   views: ["floor plan per level", "3D", "elevations: north, south, east, west"],
   notSupported: [
     "section views (not implemented yet)",
-    "dimensions and text annotations (not implemented yet)",
+    "AI dimension and text-annotation operations (manual static dimensions are available)",
     "gable/shed/mansard/free-form roofs",
     "stairs, ramps, railings, curtain walls, terrain",
   ],

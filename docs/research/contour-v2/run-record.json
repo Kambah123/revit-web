@@ -1,0 +1,117 @@
+{
+  "date": "2026-10-13T23:16:23.656Z",
+  "evidenceId": "ev_062113d17c11ab34cb3e85d4407ead1192cc99937f22d9759d3e3f291b913655",
+  "notice": "Agent-authored summary and separate file hashes. REA runtime cannot bind artifact identity.",
+  "counts": {
+    "dom": 629,
+    "accessibility": 418,
+    "scripts": 3
+  },
+  "completeness": {
+    "status": "policy_filtered",
+    "conditions": [
+      "attach_limited",
+      "policy_filtered"
+    ],
+    "policy_filtered_sections": [
+      "console_text",
+      "json_body_shapes",
+      "metadata",
+      "script_sources",
+      "scripts",
+      "storage_keys",
+      "websocket_shapes"
+    ],
+    "attach_limited_sections": [
+      "console_events",
+      "metadata",
+      "network_requests",
+      "websocket_connections",
+      "websocket_frames"
+    ],
+    "truncated_sections": [],
+    "unavailable_sections": [],
+    "excluded": [
+      {
+        "section": "console_text",
+        "reason": "not_approved",
+        "count": null
+      },
+      {
+        "section": "json_body_shapes",
+        "reason": "not_approved",
+        "count": null
+      },
+      {
+        "section": "metadata",
+        "reason": "unsupported_url",
+        "count": 1
+      },
+      {
+        "section": "script_sources",
+        "reason": "not_approved",
+        "count": 3
+      },
+      {
+        "section": "scripts",
+        "reason": "unattributed_origin",
+        "count": 2
+      },
+      {
+        "section": "scripts",
+        "reason": "unsupported_url",
+        "count": 16
+      },
+      {
+        "section": "storage_keys",
+        "reason": "not_approved",
+        "count": null
+      },
+      {
+        "section": "websocket_shapes",
+        "reason": "not_approved",
+        "count": null
+      }
+    ],
+    "dropped_events": {
+      "scripts": 0,
+      "network_requests": 0,
+      "console_events": 0,
+      "websocket_connections": 0,
+      "websocket_frames": 0,
+      "webmcp_tools": 0,
+      "timeline_events": 0,
+      "total": 0
+    }
+  },
+  "limitations": [
+    "Artifact identity is unavailable for this observation.",
+    "Observation starts when REA attaches; prior network and console activity is unavailable.",
+    "Raw network headers, bodies, cookies, storage values, console objects, and WebSocket payloads are never retained; explicitly requested primitive console text is retained verbatim, while payload captures retain value-free shapes.",
+    "Source maps are reported only as declarative URLs and are not fetched.",
+    "URL-less scripts and console events without an allowed source URL are excluded because their origin cannot be proven.",
+    "Browser host platform and architecture were not observed."
+  ],
+  "hashes": {
+    "dist/index.html": {
+      "bytes": 619,
+      "sha256": "971efae56b75639ce4e66925a1f6abc440ae911dcc2ae34eb79f381d6abb70ea"
+    },
+    "dist/assets/App-BK5wp8JV.js": {
+      "bytes": 189060,
+      "sha256": "b025d69efbf025e008a9de945e327b89e229233f472ca7f08bd935da77bc6b17"
+    },
+    "dist/assets/index-DOcSupYX.js": {
+      "bytes": 335248,
+      "sha256": "af66c320b9bf79c44315baefedcd31f49ac451f3b1c132f7b10425fdfa459d64"
+    },
+    "dist/assets/index-DQrtquK_.css": {
+      "bytes": 71896,
+      "sha256": "b484a705bdd56a10344db6e1f8518ace9525a785ea82fdadddaae8d777490a73"
+    },
+    "dist/assets/three-5D1Vsvw0.js": {
+      "bytes": 511427,
+      "sha256": "86700ba33d42e2a615bb2685f6dd47ff93748232ab86148651bcaa259778f7ff"
+    }
+  }
+}

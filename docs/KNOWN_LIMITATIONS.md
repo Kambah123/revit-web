@@ -1,5 +1,6 @@
 # Known limitations
 
+> Current update: [Contour milestone 2](CONTOUR_MILESTONE_2.md) replaces the default shell with shadcn/ui and adds manual static dimensions with schema v5 migration. Historical no-dimensions/v4 statements below predate this update.
 Reverified 2026-10-12 (UTC). Current feature boundaries are in [`PRODUCT_SCOPE.md`](PRODUCT_SCOPE.md); Autodesk API/APS limits are in [`REVIT_API_AUDIT.md`](REVIT_API_AUDIT.md).
 
 ## Environment, build and dependency audit

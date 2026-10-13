@@ -1,6 +1,22 @@
-# revit-web
+# Contour · revit-web
 
 A browser-based BIM editor with an application-native semantic model and a Three.js plan/3D editor. **This project is not Autodesk Revit and does not read, edit or write RVT files.** Autodesk API/APS research and the carefully bounded integration recommendation are documented in [`docs/REVIT_API_AUDIT.md`](docs/REVIT_API_AUDIT.md).
+
+## Contour workspace — shadcn/ui redesign
+
+The default route now opens **Contour**, an independent, local-first workspace informed by the Synaps research and screenshot audit. The original sage/serif design has been replaced with a neutral slate/blue **shadcn/ui + Tailwind CSS 4** workspace. This is an independent implementation, not full Synaps parity.
+
+- Project dashboard with real model thumbnails, search, sorting, grid/list layouts, creation, duplication and confirmed deletion.
+- Two original editable examples; compact drafting canvas and consistent plan/3D controls, searchable layers, contextual properties and building-type/material assets.
+- IndexedDB project storage, save/error indicators, safe return to the library and independent JSON imports/exports. **Storage belongs to this browser and origin; export backups.**
+- **Static dimensions:** press `M`, choose two points, then click an offset. Edit endpoints, offset and mm/m display units; select/delete/undo and save them with the model. Dimensions do **not** follow wall edits.
+- Existing model commands, undo/redo, plan/3D rendering and previewed AI plan application reused, not replaced by a mock canvas.
+
+The original ribbon editor remains at **`/?legacy=1`**. See [current implementation and verification](docs/CONTOUR_MILESTONE_2.md) and the [historical first milestone](docs/CONTOUR_MILESTONE_1.md), including REA's actual production-browser inspection. AI in the current preview is an explicitly labelled deterministic demo, not a live model call.
+
+## Synaps rebuild research
+
+The [Synaps research and rebuild blueprint](docs/research/synaps/README.md) compares current public documentation with this editor, records conflicting claims, and proposes phased implementation with acceptance tests. The [REA installation/use record](docs/research/synaps/REA.md) documents the pinned tool and skill, its partial analysis of our compiled app, and the limits of the Synaps investigation. Research findings are distinguished from the implementation milestones; not every documented Synaps feature is implemented here.
 
 ## Current capabilities
 
@@ -8,14 +24,14 @@ A browser-based BIM editor with an application-native semantic model and a Three
 - Add polygon floors and rooms, rectangular columns, horizontal ceilings and simple hip roofs.
 - Use per-project element types and built-in display materials; choose a wall type's material and see its colour in the native 3D view.
 - Edit supported element properties, view derived areas/volumes, undo/redo, autosave/recover, and save/open versioned `*.revit-web.json` projects.
-- Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with a ribbon workspace, Project Browser, Properties panel, view tabs and command launcher.
+- Work in a native Three.js orthographic plan and 3D view, plus generated read-only north/south/east/west elevations, with the original ribbon, Project Browser and view tabs available in legacy mode, and the shared command launcher in both shells.
 - **AI Architect (DeepSeek):** describe buildings and edits in plain English (metres, millimetres or feet); the model proposes a validated, previewed design plan that is applied through the real command layer as one undo step — genuine walls, rooms, floors, doors, windows and hip roofs, plus generated elevations. See [`docs/AI_ARCHITECT.md`](docs/AI_ARCHITECT.md) for setup, security and limits.
 
-The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v4; v1/v2/v3 files migrate to v4). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
+The semantic model is authoritative; Three.js geometry is derived. All linear model values are integer millimetres. App JSON is the only supported project format (schema v5; v1/v2/v3/v4 files migrate to v5). See [`docs/PRODUCT_SCOPE.md`](docs/PRODUCT_SCOPE.md) and [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) for boundaries.
 
 ## Getting started
 
-Requires Node.js 22 or newer.
+Requires Node.js 22.12+ on the Node 22 line, or a supported newer LTS (24+). Tested here with Node 22.22.3.
 
 ```bash
 npm ci
@@ -30,6 +46,7 @@ For browser tests, start the dev server in one terminal, install/provide Chrome 
 ```bash
 CHROME_PATH=/path/to/chrome npm run e2e       # core workflow (slice 1)
 CHROME_PATH=/path/to/chrome npm run e2e:ai    # AI Architect workflow (DeepSeek mocked)
+CHROME_PATH=/path/to/chrome npm run e2e:studio # Contour dashboard/editor workflow
 CHROME_PATH=/path/to/chrome npm run e2e:all   # all browser suites
 ```
 
@@ -61,7 +78,7 @@ Redeploy after changing the variable. Check `/api/ai/health`: `aiConfigured: tru
 is available to that deployment; `false` means the serverless route is running but DeepSeek is not
 configured. Local `npm run dev` still needs `npm run server` running separately.
 
-See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and the tested sandbox setup. Build output currently includes Vite's informational warning that the Three.js application chunk exceeds 500 kB; see [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
+See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and the tested sandbox setup. Build output currently includes Vite's informational warning that the lazy-loaded Three.js vendor chunk slightly exceeds 500 kB; see [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
 ## Shortcuts
 
@@ -76,6 +93,7 @@ See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and th
 | `C` | Column tool |
 | `E` | Ceiling tool |
 | `O` | Roof tool |
+| `M` | Static dimension: two points, then offset |
 | `Esc` | Finish boundary/wall chain or return to Select |
 | `Delete` | Delete selection |
 | `Ctrl+K` | Search commands |
@@ -86,7 +104,9 @@ See [`docs/TESTING.md`](docs/TESTING.md) for browser flags, all scenarios and th
 ## Project layout
 
 ```text
-src/model/       Canonical schema v4, integer-mm units, commands, validation, quantities
+src/components/ui/ shadcn/ui primitives (MIT source and React 18 adaptations)
+src/studio/      Neutral workspace, IndexedDB library, assets, examples
+src/model/       Canonical schema v5, integer-mm units, commands, validation, quantities
 src/geometry/    Derived geometry for building elements plus model-derived elevation projections
 src/viewer/      Native Three.js plan/3D scene and pointer interaction
 src/app/         Undo/redo history and command registry

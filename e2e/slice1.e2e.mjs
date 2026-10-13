@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 
-const APP_URL = process.env.APP_URL ?? "http://localhost:5173/";
+const APP_URL = (() => { const url = new URL(process.env.APP_URL ?? "http://localhost:5173/"); url.searchParams.set("legacy", "1"); return url.href; })();
 const CHROME_PATH = process.env.CHROME_PATH;
 const SHOTS = process.env.E2E_SHOTS ?? resolve("e2e/screenshots");
 const DOWNLOADS = mkdtempSync(join(tmpdir(), "revit-web-e2e-"));
@@ -93,7 +93,7 @@ try {
     }, labelText);
     const input = handle.asElement();
     assert.ok(input, `field "${labelText}" not found`);
-    await input.click({ clickCount: 3 });
+    await input.click({ count: 3 });
     await page.keyboard.type(String(value));
     await page.keyboard.press("Enter");
     await sleep(120);
@@ -272,7 +272,7 @@ try {
   const savedText = readFileSync(join(DOWNLOADS, saved[0]), "utf8");
   const savedObj = JSON.parse(savedText);
   assert.equal(savedObj.format, "revit-web/project");
-  assert.equal(savedObj.schemaVersion, 4);
+  assert.equal(savedObj.schemaVersion, 5);
   assert.equal(savedObj.walls.length, 3);
   assert.equal(savedObj.openings.length, 2);
   step("saves a project file in the versioned format");

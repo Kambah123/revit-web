@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 
-const APP_URL = process.env.APP_URL ?? "http://localhost:5173/";
+const APP_URL = (() => { const url = new URL(process.env.APP_URL ?? "http://localhost:5173/"); url.searchParams.set("legacy", "1"); return url.href; })();
 const CHROME_PATH = process.env.CHROME_PATH;
 const SHOTS = process.env.E2E_SHOTS ?? resolve("e2e/screenshots");
 const DOWNLOADS = mkdtempSync(join(tmpdir(), "revit-web-e2e2-"));
@@ -116,7 +116,7 @@ try {
   // 4. Rename the room in properties ----------------------------------------
   const input = await page.$('input[aria-label="Name"]');
   assert.ok(input, "room name field found");
-  await input.click({ clickCount: 3 });
+  await input.click({ count: 3 });
   await page.keyboard.type("Living room");
   await page.keyboard.press("Enter");
   await sleep(150);
@@ -171,7 +171,7 @@ try {
   const saved = readdirSync(DOWNLOADS).filter((f) => f.endsWith(".revit-web.json"));
   assert.equal(saved.length, 1, "one file downloaded");
   const savedObj = JSON.parse(readFileSync(join(DOWNLOADS, saved[0]), "utf8"));
-  assert.equal(savedObj.schemaVersion, 4);
+  assert.equal(savedObj.schemaVersion, 5);
   assert.equal(savedObj.floors.length, 1);
   assert.equal(savedObj.rooms.length, 1);
   assert.equal(savedObj.columns.length, 2);
@@ -207,11 +207,11 @@ try {
   await sleep(400);
   project = await model();
   assert.equal(project.name, "V2 legacy");
-  assert.equal(project.schemaVersion, 4);
+  assert.equal(project.schemaVersion, 5);
   assert.equal(project.materials.length, 1);
   assert.equal(project.wallTypes[0].materialId, project.materials[0].id);
   assert.equal(project.walls.length, 1);
-  step("opens a schema v2 file and migrates it to schema v4");
+  step("opens a schema v2 file and migrates it to schema v5");
 
   // 10. Clean console --------------------------------------------------------
   assert.deepEqual(problems, [], `browser problems:\n${problems.join("\n")}`);
