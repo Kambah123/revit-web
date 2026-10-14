@@ -78,6 +78,7 @@ export function createProject(name = "Untitled project"): Project {
     columns: [],
     ceilings: [],
     roofs: [],
+    dimensions: [],
   };
 }
 

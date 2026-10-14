@@ -91,9 +91,10 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
   async function send(text: string, repairNote?: string) {
     const message = text.trim();
     if (message === "" || busy) return;
+    const thinkingText = demoMode ? "Demo planner is preparing a proposal…" : "DeepSeek is thinking…";
     setBusy(true);
     setInput("");
-    setEntries((e) => [...e, { kind: "user", text: message }, ...(repairNote ? [{ kind: "status" as const, text: repairNote }] : []), { kind: "status" as const, text: "DeepSeek is thinking…" }]);
+    setEntries((e) => [...e, { kind: "user", text: message }, ...(repairNote ? [{ kind: "status" as const, text: repairNote }] : []), { kind: "status" as const, text: thinkingText }]);
 
     const context = buildProjectContext(project, {
       selection,
@@ -107,7 +108,7 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
       selection: selection ? (describeSelection(project, selection) as unknown as Record<string, unknown> | null) : null,
     });
 
-    setEntries((e) => e.filter((x) => !(x.kind === "status" && x.text === "DeepSeek is thinking…")));
+    setEntries((e) => e.filter((x) => !(x.kind === "status" && x.text === thinkingText)));
 
     if (!result.ok) {
       setEntries((e) => [
@@ -160,7 +161,7 @@ export function AiArchitectPanel({ project, selection, activeView, onApply, onCl
     ].slice(-30);
 
     setEntries((e) => [
-      ...e.filter((x) => x.kind !== "status" || x.text !== "DeepSeek is thinking…"),
+      ...e.filter((x) => x.kind !== "status" || x.text !== thinkingText),
       { kind: "assistant", text: assistantText },
       { kind: "plan", plan, validation, demo: result.demo, state: "pending" },
     ]);

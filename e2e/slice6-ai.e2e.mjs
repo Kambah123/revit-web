@@ -12,7 +12,7 @@ import { mkdirSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import puppeteer from "puppeteer-core";
 
-const APP_URL = process.env.APP_URL ?? "http://localhost:5173/";
+const APP_URL = (() => { const url = new URL(process.env.APP_URL ?? "http://localhost:5173/"); url.searchParams.set("legacy", "1"); return url.href; })();
 const CHROME_PATH = process.env.CHROME_PATH;
 const SHOTS = process.env.E2E_SHOTS ?? pathResolve("e2e/screenshots");
 mkdirSync(SHOTS, { recursive: true });

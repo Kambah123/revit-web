@@ -15,12 +15,14 @@ import {
   wallTypeById,
 } from "../model/project";
 import { floorAreaM2, floorPerimeterMm, floorVolumeMm3, projectQuantities, roomAreaM2 } from "../model/quantities";
-import type { Ceiling, Column, Floor, Opening, Project, Roof, Room, Wall } from "../model/types";
+import { dimensionLabel } from "../geometry/dimensions";
+import type { Dimension, Ceiling, Column, Floor, Opening, Project, Roof, Room, Wall } from "../model/types";
 import type { Selection } from "../viewer/BimScene";
 
 interface PropertiesPanelProps {
   project: Project;
   selection: Selection;
+  onDimensionPatch(id:string,patch:Partial<Pick<Dimension,"offset"|"unit"|"start"|"end">>):boolean;
   onWallPatch(wallId: string, patch: Partial<Pick<Wall, "levelId" | "wallTypeId" | "height" | "start" | "end">>): void;
   onWallTypeThickness(wallTypeId: string, thickness: number): void;
   onWallTypeMaterial(wallTypeId: string, materialId: string): void;
@@ -44,6 +46,8 @@ export function PropertiesPanel(props: PropertiesPanelProps) {
   const ceiling = selection?.kind === "ceiling" ? project.ceilings.find((c) => c.id === selection.id) : undefined;
   const roof = selection?.kind === "roof" ? project.roofs.find((r) => r.id === selection.id) : undefined;
 
+  const dimension=selection?.kind==="dimension"?project.dimensions.find(d=>d.id===selection.id):undefined;
+  if(dimension)return <><h2>Dimension</h2><div className="props"><p className="dimension-value">{dimensionLabel(dimension)}</p><p className="panel-note">Static, aligned measurement. Moving or deleting walls does not update these points.</p><label className="field"><span>Display unit</span><select aria-label="Dimension display unit" value={dimension.unit} onChange={e=>props.onDimensionPatch(dimension.id,{unit:e.target.value as Dimension["unit"]})}><option value="mm">Millimetres (mm)</option><option value="m">Metres (m)</option></select></label><NumberField label="Dimension offset (mm)" value={dimension.offset} integer onCommit={offset=>props.onDimensionPatch(dimension.id,{offset})}/>{(["start","end"] as const).map(key=><div key={key}><h3>{key==="start"?"First point":"Second point"}</h3>{(["x","y"] as const).map(axis=><NumberField key={axis} label={`${key} ${axis} (mm)`} value={dimension[key][axis]} integer onCommit={value=>props.onDimensionPatch(dimension.id,{[key]:{...dimension[key],[axis]:value}})}/>)}</div>)}<button className="danger" onClick={props.onDeleteSelection}>Delete dimension</button></div></>;
   if (wall) return <WallProperties {...props} wall={wall} />;
   if (opening) return <OpeningProperties {...props} opening={opening} />;
   if (floor) return <FloorProperties {...props} floor={floor} />;

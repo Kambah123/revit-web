@@ -36,7 +36,7 @@ export function validateProject(p: Project): Issue[] {
   const warning = (code: string, message: string, entityId?: string) =>
     issues.push({ severity: "warning", code, message, entityId });
 
-  if (p.schemaVersion !== 4) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
+  if (p.schemaVersion !== 5) error("schema", `Unsupported schema version ${String(p.schemaVersion)}.`);
   if (p.units?.length !== "mm") error("units", "Project length unit must be millimetres.");
   if (!isInt(p.revision) || p.revision < 0) error("revision", "Revision must be a non-negative integer.");
 
@@ -244,6 +244,16 @@ export function validateProject(p: Project): Issue[] {
     }
   }
 
+  if (!Array.isArray(p.dimensions)) error("dimensions", "Project dimensions must be an array.");
+  else {
+    checkUniqueIds(p.dimensions.map(d=>d.id), "dimension", error);
+    for(const d of p.dimensions){
+      if(!levelById(p,d.levelId))error("dimension-level","Dimension refers to a missing level.",d.id);
+      if(!d.start||!d.end||![d.start.x,d.start.y,d.end.x,d.end.y,d.offset].every(isInt))error("dimension-coordinate","Dimension coordinates and offset must be safe integer millimetres.",d.id);
+      else if(Math.hypot(d.end.x-d.start.x,d.end.y-d.start.y)<1)error("dimension-length","Dimension points must be at least 1 mm apart.",d.id);
+      if(d.unit!=="mm"&&d.unit!=="m")error("dimension-unit","Dimension display unit must be mm or m.",d.id);
+    }
+  }
   return issues;
 }
 

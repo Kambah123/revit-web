@@ -1,16 +1,18 @@
 import * as THREE from "three";
+import { dimensionGeometry, dimensionOffset, dimensionLabel } from "../geometry/dimensions";
+import { planShapeCoordinates } from "../geometry/planProjection";
 import { MapControls } from "three/examples/jsm/controls/MapControls.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { clipSolid, PLAN_CUT_HEIGHT_MM, projectGeometry, type OpeningVoid, type Solid } from "../geometry/wallSolids";
 import { ceilingSlabs, columnSolids, floorSlabs, roomFaces, roofSolids, type CeilingSlab, type FloorSlab, type RoomFace, type RoofSolid } from "../geometry/elementGeometry";
 import { snapPoint } from "../model/geometry";
 import { levelById, materialById, wallTypeById } from "../model/project";
-import type { Point, Polygon, Project } from "../model/types";
+import type { Dimension, Point, Polygon, Project } from "../model/types";
 
 export type ViewMode = "plan" | "3d";
-export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column" | "ceiling" | "roof";
+export type Tool = "select" | "wall" | "door" | "window" | "floor" | "room" | "column" | "ceiling" | "roof" | "dimension";
 export type Selection =
-  | { kind: "wall" | "opening" | "floor" | "room" | "column" | "ceiling" | "roof"; id: string }
+  | { kind: "wall" | "opening" | "floor" | "room" | "column" | "ceiling" | "roof" | "dimension"; id: string }
   | null;
 export type VisualStyle = "shaded" | "hiddenLine" | "wireframe";
 
@@ -48,6 +50,7 @@ const COLOR = {
 };
 
 interface PickUserData {
+  dimensionId?: string;
   wallId?: string;
   openingId?: string;
   floorId?: string;
@@ -59,6 +62,7 @@ interface PickUserData {
 
 /** Pick priority when several meshes overlap under the pointer: lower wins. */
 const PICK_PRIORITY: Record<string, number> = {
+  dimensionId: -1,
   openingId: 0,
   columnId: 1,
   wallId: 2,
@@ -90,6 +94,13 @@ export class BimScene {
   /** Cache of colour materials keyed by "#rrggbb", rebuilt never; disposed with the scene. */
   private readonly colorMaterials = new Map<string, THREE.MeshStandardMaterial>();
 
+  private readonly planMaterials = new Map<string, THREE.MeshBasicMaterial>();
+  private studioTheme = false;
+  private visualStyle: VisualStyle = "shaded";
+  private readonly grid = new THREE.GridHelper(200, 200, 0x3a4150, 0x2a2f3a);
+  private readonly dimensionLine = new THREE.LineBasicMaterial({color:0x64748b,depthTest:false,depthWrite:false});
+  private readonly dimensionSelected = new THREE.LineBasicMaterial({color:0x2563eb,depthTest:false,depthWrite:false});
+  private readonly planEdges = new THREE.LineBasicMaterial({ color: 0x777e78 });
   private project: Project | null = null;
   private activeLevelId: string | null = null;
   private selection: Selection = null;
@@ -176,7 +187,7 @@ export class BimScene {
     sun.shadow.camera.top = 40;
     sun.shadow.camera.bottom = -40;
     this.scene.add(sun);
-    this.scene.add(new THREE.GridHelper(200, 200, 0x3a4150, 0x2a2f3a));
+    this.scene.add(this.grid);
     this.scene.add(this.modelGroup, this.pickGroup, this.previewGroup, this.labelGroup);
 
     const canvas = this.renderer.domElement;
@@ -218,6 +229,7 @@ export class BimScene {
 
   /** Shaded (default), hidden-line (flat colours) or wireframe. Applies to every model material. */
   setVisualStyle(style: VisualStyle): void {
+    this.visualStyle = style;
     const wire = style === "wireframe";
     for (const material of [...Object.values(this.materials), ...this.colorMaterials.values()]) {
       if ("wireframe" in material) {
@@ -226,7 +238,69 @@ export class BimScene {
         material.needsUpdate = true;
       }
     }
-    this.renderer.setClearColor(style === "hiddenLine" ? 0xf2f3f5 : 0x1b1f27);
+    this.renderer.setClearColor(this.studioTheme ? 0xf8fafc : style === "hiddenLine" ? 0xf2f3f5 : 0x1b1f27);
+    if(this.studioTheme) this.rebuild();
+  }
+
+  setStudioTheme(): void {
+    this.studioTheme = true;
+    this.renderer.setClearColor(0xf8fafc);
+    this.grid.visible = false;
+    (Array.isArray(this.grid.material)?this.grid.material:[this.grid.material]).forEach(m=>(m as THREE.LineBasicMaterial).color.set(0xdbe1e8));
+    (this.materials.roomFill as THREE.MeshBasicMaterial).color.set(0xcbd5e1);
+    (this.materials.roomFill as THREE.MeshBasicMaterial).opacity = 0.25;
+    (this.materials.selected as THREE.MeshStandardMaterial).color.set(0x468bf0);
+    (this.materials.selected as THREE.MeshStandardMaterial).emissive.set(0x091b35);
+    this.rebuild();
+  }
+
+  setGridVisible(visible: boolean): void { this.grid.visible = visible; }
+
+  zoomBy(factor: number): void {
+    if (this.view === "plan") {
+      this.planCamera.zoom = THREE.MathUtils.clamp(this.planCamera.zoom * factor, 0.1, 50);
+      this.planCamera.updateProjectionMatrix();
+    } else {
+      const offset = this.perspCamera.position.clone().sub(this.orbitControls.target);
+      offset.multiplyScalar(1 / factor).clampLength(0.5, 500);
+      this.perspCamera.position.copy(this.orbitControls.target).add(offset);
+    }
+    this.activeControls().update();
+  }
+
+  /** Fit actual model bounds instead of resetting to a fixed origin. */
+  fitToModel(): void {
+    if (!this.project) return;
+    const onView = (element: {levelId:string}) => this.view === "3d" || element.levelId === this.activeLevelId;
+    const polygons = [...this.project.floors, ...this.project.rooms, ...this.project.ceilings, ...this.project.roofs];
+    const points = [
+      ...this.project.walls.filter(onView).flatMap(w=>[w.start,w.end]),
+      ...this.project.dimensions.filter(onView).flatMap(d=>{const g=dimensionGeometry(d);return [d.start,d.end,g.a,g.b,g.label]}),
+      ...polygons.filter(onView).flatMap(element=>element.boundary),
+      ...this.project.columns.filter(onView).map(column=>column.position),
+    ];
+    if (!points.length) { this.planCamera.zoom=1; this.planCamera.updateProjectionMatrix(); this.resetCamera(); return; }
+    const minX=Math.min(...points.map(p=>p.x))/1000, maxX=Math.max(...points.map(p=>p.x))/1000;
+    const minY=Math.min(...points.map(p=>p.y))/1000, maxY=Math.max(...points.map(p=>p.y))/1000;
+    const x=(minX+maxX)/2, z=-(minY+maxY)/2;
+    if (this.view === "plan") {
+      const aspect=Math.max(0.1,this.container.clientWidth/Math.max(1,this.container.clientHeight));
+      const half=Math.max((maxY-minY)/2,(maxX-minX)/2/aspect,2)*1.5;
+      this.planCamera.zoom=THREE.MathUtils.clamp(PLAN_HALF_HEIGHT_M/half,0.1,50);
+      this.focusPlanPoint({x:x*1000,y:-z*1000});
+      this.planCamera.updateProjectionMatrix();
+    } else {
+      const bounds = new THREE.Box3().setFromObject(this.modelGroup);
+      const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+      const radius = Math.max(4, sphere.radius);
+      const verticalFov=THREE.MathUtils.degToRad(this.perspCamera.fov);
+      const horizontalFov=2*Math.atan(Math.tan(verticalFov/2)*this.perspCamera.aspect);
+      const distance=radius/Math.sin(Math.min(verticalFov,horizontalFov)/2)*1.15;
+      this.orbitControls.target.copy(sphere.center);
+      this.perspCamera.position.copy(this.orbitControls.target).add(new THREE.Vector3(1,.85,1).normalize().multiplyScalar(distance));
+      this.perspCamera.lookAt(this.orbitControls.target);
+    }
+    this.activeControls().update();
   }
 
   setShadows(on: boolean): void {
@@ -363,6 +437,14 @@ export class BimScene {
     Object.values(this.materials).forEach((m) => m.dispose());
     this.colorMaterials.forEach((m) => m.dispose());
     this.colorMaterials.clear();
+    this.planMaterials.forEach(m=>m.dispose());
+    this.planMaterials.clear();
+    this.planEdges.dispose();
+    this.dimensionLine.dispose();
+    this.dimensionSelected.dispose();
+    this.grid.geometry.dispose();
+    const gridMats=Array.isArray(this.grid.material)?this.grid.material:[this.grid.material];
+    gridMats.forEach(m=>m.dispose());
     this.renderer.dispose();
     canvas.remove();
   }
@@ -475,6 +557,7 @@ export class BimScene {
     }
     // Rooms are plan annotations: a translucent fill and a label, never 3D geometry.
     if (this.view === "plan") {
+      for(const d of project.dimensions.filter(d=>d.levelId===this.activeLevelId))this.addDimensionGraphic(d,this.selection?.id===d.id);
       for (const face of roomFaces(project, visible)) {
         this.addRoomFace(face, face.roomId === selectedRoomId, this.detailLevel !== "Coarse");
       }
@@ -483,10 +566,17 @@ export class BimScene {
 
   /** Material for a stored colour string, created once and shared. */
   private materialForColor(color: string | undefined, fallback: number): THREE.Material {
+    if (this.studioTheme && this.view === "plan") {
+      const planColor=this.visualStyle === "hiddenLine" ? "#ffffff" : color ?? "#ffffff";
+      const key=`${planColor}:${this.visualStyle}`;
+      let material=this.planMaterials.get(key);
+      if(!material){material=new THREE.MeshBasicMaterial({color:planColor,wireframe:this.visualStyle === "wireframe"});this.planMaterials.set(key,material)}
+      return material;
+    }
     const hex = color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : `#${fallback.toString(16).padStart(6, "0")}`;
     let material = this.colorMaterials.get(hex);
     if (!material) {
-      material = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.85 });
+      material = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), roughness: 0.85, wireframe: this.visualStyle === "wireframe", flatShading: this.visualStyle === "hiddenLine" });
       this.colorMaterials.set(hex, material);
     }
     return material;
@@ -536,6 +626,10 @@ export class BimScene {
     mesh.rotation.y = Math.atan2(s.axis.y, s.axis.x);
     mesh.userData = { ...userData };
     group.add(mesh);
+    if(this.studioTheme && this.view === "plan" && group === this.modelGroup) {
+      const edges=new THREE.LineSegments(new THREE.EdgesGeometry(geometry),this.planEdges);
+      edges.position.copy(mesh.position);edges.rotation.copy(mesh.rotation);group.add(edges);
+    }
     return mesh;
   }
 
@@ -573,10 +667,10 @@ export class BimScene {
 
   /** Extrudes a boundary polygon between elevations z0..z1 and adds it to the model group. */
   private addSlabMesh(boundary: Polygon, z0: number, z1: number, material: THREE.Material): THREE.Mesh {
-    const shape = new THREE.Shape(boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const shape = new THREE.Shape(boundary.map((p) => new THREE.Vector2(...planShapeCoordinates(p))));
     const depth = (z1 - z0) * MM_TO_SCENE;
     const geometry = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false });
-    // Shape (x, -y) is rotated so the extrusion runs along world +Y and plan y maps to -z.
+    // Shape (x, y) rotated -PI/2 sends local +Z to world +Y and plan +y to world -Z.
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.y = z0 * MM_TO_SCENE;
@@ -642,7 +736,7 @@ export class BimScene {
 
   /** Plan-only room fill and a canvas-texture label showing name and derived area. */
   private addRoomFace(face: RoomFace, selected: boolean, withLabel: boolean): void {
-    const shape = new THREE.Shape(face.boundary.map((p) => new THREE.Vector2(p.x * MM_TO_SCENE, -p.y * MM_TO_SCENE)));
+    const shape = new THREE.Shape(face.boundary.map((p) => new THREE.Vector2(...planShapeCoordinates(p))));
     const geometry = new THREE.ShapeGeometry(shape);
     const mesh = new THREE.Mesh(geometry, selected ? this.materials.roomSelected : this.materials.roomFill);
     mesh.rotation.x = -Math.PI / 2;
@@ -661,24 +755,44 @@ export class BimScene {
   }
 
   /** A text sprite drawn on a canvas texture; shared style, disposed with the scene. */
+  /** Render static dimensions above the model; invisible hit strips support native canvas selection. */
+  private addDimensionGraphic(d:Dimension,selected:boolean,preview=false):void {
+    const shape=dimensionGeometry(d), y=this.activeElevationM()+1.6;
+    const group=preview?this.previewGroup:this.modelGroup;
+    const geometry=new THREE.BufferGeometry().setFromPoints(shape.segments.flatMap(pair=>pair.map(p=>planToWorld(p,y))));
+    const line=new THREE.LineSegments(geometry,selected?this.dimensionSelected:this.dimensionLine);line.renderOrder=20;group.add(line);
+    const label=this.labelSprite(dimensionLabel(d));label.position.copy(planToWorld(shape.label,y));label.material.depthTest=false;label.renderOrder=21;label.userData={dimensionId:d.id};(preview?this.previewGroup:this.labelGroup).add(label);
+    if(!preview){
+      const hit=new THREE.Mesh(new THREE.BoxGeometry(shape.length*.001,.04,.24),this.materials.pick);
+      hit.position.copy(planToWorld({x:(shape.a.x+shape.b.x)/2,y:(shape.a.y+shape.b.y)/2},y));hit.rotation.y=Math.atan2(shape.axis.y,shape.axis.x);hit.userData={dimensionId:d.id};this.pickGroup.add(hit);
+    }
+  }
+  setDimensionPreview(points:Point[],cursor:Point|null):void {
+    this.clearPreview();if(!cursor||!points.length)return;
+    const end=points[1]??cursor;if(Math.hypot(end.x-points[0].x,end.y-points[0].y)<1)return;
+    this.addDimensionGraphic({id:"preview",levelId:this.activeLevelId??"",start:points[0],end,offset:points.length>1?dimensionOffset(points[0],end,cursor):0,unit:"mm"},true,true);
+  }
+
   private labelSprite(text: string): THREE.Sprite {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
     canvas.height = 128;
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "rgba(20, 24, 32, 0.75)";
+    ctx.fillStyle = this.studioTheme ? "rgba(248,250,252,0)" : "rgba(20, 24, 32, 0.75)";
     ctx.beginPath();
     ctx.roundRect(8, 24, 240, 80, 12);
     ctx.fill();
-    ctx.fillStyle = "#e6e9ef";
-    ctx.font = "600 28px system-ui, sans-serif";
+    ctx.fillStyle = this.studioTheme ? "#475569" : "#e6e9ef";
+    ctx.font = this.studioTheme ? "400 25px system-ui, sans-serif" : "600 28px system-ui, sans-serif";
     ctx.textAlign = "center";
     const lines = text.split("\n");
     lines.forEach((line, i) => ctx.fillText(line, 128, 56 + i * 34, 224));
     const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, depthTest: !this.studioTheme });
     const sprite = new THREE.Sprite(material);
+    if (this.studioTheme) sprite.renderOrder = 10;
     // Label size follows the annotation scale: 1:100 is the base size.
     const k = this.annotationScale / 100;
     sprite.scale.set(2.4 * k, 1.2 * k, 1);
@@ -689,7 +803,7 @@ export class BimScene {
   private clearGroup(group: THREE.Group): void {
     for (const child of [...group.children]) {
       group.remove(child);
-      if (child instanceof THREE.Mesh) child.geometry.dispose();
+      if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) child.geometry.dispose();
       if (child instanceof THREE.Sprite) {
         child.material.map?.dispose();
         child.material.dispose();
@@ -777,9 +891,11 @@ const SELECTION_KEY: Record<NonNullable<Selection>["kind"], keyof PickUserData> 
   column: "columnId",
   ceiling: "ceilingId",
   roof: "roofId",
+  dimension: "dimensionId",
 };
 
 function selectionFromUserData(data: PickUserData): Selection {
+  if (data.dimensionId) return {kind:"dimension",id:data.dimensionId};
   if (data.openingId) return { kind: "opening", id: data.openingId };
   if (data.columnId) return { kind: "column", id: data.columnId };
   if (data.wallId) return { kind: "wall", id: data.wallId };

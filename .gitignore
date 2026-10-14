@@ -5,3 +5,8 @@ dist/
 .vite/
 coverage/
 e2e/screenshots/
+
+# Local provider credentials and machine configuration
+.env
+.env.*
+!.env.example

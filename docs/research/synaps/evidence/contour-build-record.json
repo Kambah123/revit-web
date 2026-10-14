@@ -1,0 +1,27 @@
+{
+  "description": "Out-of-band file hashes recorded by the coding agent, NOT an artifact identity asserted by REA runtime capture.",
+  "recordedAt": "2026-10-13T22:17:45.603Z",
+  "runtimeEvidenceId": "ev_fc7f0f05e37b5cbe0cf5428d5f40f27756015a7caf24ad4f075cf206b2232dcc",
+  "files": {
+    "dist/index.html": {
+      "bytes": 619,
+      "sha256": "f6e191ad8ee0c050e65c57c921c0afa0c719ac2eff940343a5ff40ab9dd60ebd"
+    },
+    "dist/assets/App-B2DFkfO1.js": {
+      "bytes": 158320,
+      "sha256": "e1783005a6b0b73f79c971e86dfc7401f5b00e9fb4ad2e7e6185f80b23ed7644"
+    },
+    "dist/assets/index-C1ew67AJ.js": {
+      "bytes": 191806,
+      "sha256": "8531cf0f7016d392f0d1ede46d80acbf5f0ea300374df0b7c902c12ee414812c"
+    },
+    "dist/assets/index-CesPIo3x.css": {
+      "bytes": 45214,
+      "sha256": "ef5f5a18e98ea111a067d929933c130e191cb920f66f0b1e197e7dc10ee52454"
+    },
+    "dist/assets/three-BUccfYaf.js": {
+      "bytes": 511540,
+      "sha256": "91f2655bd81d4636056f75c039b5ea8f5bff72c24baf31c32866ce71c8d94651"
+    }
+  }
+}

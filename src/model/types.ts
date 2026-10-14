@@ -11,7 +11,17 @@ export interface Point {
  */
 export type Polygon = Point[];
 
-export const SCHEMA_VERSION = 4 as const;
+export const SCHEMA_VERSION = 5 as const;
+
+/** Static, aligned linear annotation. Coordinates and signed perpendicular offset in mm. */
+export interface Dimension {
+  id: string;
+  levelId: string;
+  start: Point;
+  end: Point;
+  offset: number;
+  unit: "mm" | "m";
+}
 
 export interface ProjectUnits {
   length: "mm";
@@ -196,4 +206,5 @@ export interface Project {
   columns: Column[];
   ceilings: Ceiling[];
   roofs: Roof[];
+  dimensions: Dimension[];
 }

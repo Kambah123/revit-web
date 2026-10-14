@@ -20,6 +20,7 @@ import {
   wallTypeById,
 } from "./project";
 import type {
+  Dimension,
   Ceiling,
   CeilingType,
   Column,
@@ -86,6 +87,7 @@ export function deleteLevel(p: Project, levelId: string): Project {
     rooms: p.rooms.filter((r) => r.levelId !== levelId),
     columns: p.columns.filter((c) => c.levelId !== levelId),
     ceilings: p.ceilings.filter((c) => c.levelId !== levelId),
+    dimensions: p.dimensions.filter(d=>d.levelId!==levelId),
     roofs: p.roofs.filter((r) => r.levelId !== levelId),
   });
 }
@@ -621,4 +623,18 @@ function requireWall(p: Project, wallId: string): Wall {
   const wall = wallById(p, wallId);
   if (!wall) throw new Error("Unknown wall.");
   return wall;
+}
+
+/** Static annotation commands share the same validation and immutable history as geometry. */
+export function addDimension(p:Project,levelId:string,start:Point,end:Point,offset:number,unit:Dimension["unit"]="mm"):{project:Project;dimension:Dimension}{
+ const dimension:Dimension={id:newId("dim"),levelId,start:{...start},end:{...end},offset,unit};
+ return {project:commit({...p,dimensions:[...p.dimensions,dimension]}),dimension};
+}
+export function updateDimension(p:Project,id:string,patch:Partial<Pick<Dimension,"start"|"end"|"offset"|"unit">>):Project{
+ if(!p.dimensions.some(d=>d.id===id))throw new Error("Dimension not found.");
+ return commit({...p,dimensions:p.dimensions.map(d=>d.id===id?{...d,...patch}:d)});
+}
+export function deleteDimension(p:Project,id:string):Project{
+ if(!p.dimensions.some(d=>d.id===id))throw new Error("Dimension not found.");
+ return commit({...p,dimensions:p.dimensions.filter(d=>d.id!==id)});
 }

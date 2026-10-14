@@ -1,4 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from "react";
+import { dimensionOffset } from "./geometry/dimensions";
+import { addDimension, updateDimension, deleteDimension } from "./model/commands";
+import { StudioCommand } from "./studio/StudioCommand";
+import { CanvasWorkspace } from "./studio/CanvasWorkspace";
+import { newId } from "./model/ids";
 import { canRedo, canUndo, historyReducer, initialHistory } from "./app/history";
 import { RIBBON_TABS, type CommandSpec, type RibbonTabId } from "./app/ribbon";
 import { applyPlan, type ApplyResult, type ViewRequest } from "./ai/applyPlan";
@@ -94,8 +99,16 @@ const elevTabId = (d: ElevationDirection) => `elev:${d}`;
 const elevationTab = (d: ElevationDirection): ViewTab => ({ id: elevTabId(d), kind: "elevation", direction: d, title: elevationTitle(d) });
 const THREED_TAB: ViewTab = { id: "3d", kind: "3d", title: "3D" };
 
-export function App() {
-  const [initial] = useState(loadInitial);
+interface AppProps {
+  initialProject?: Project;
+  studio?: boolean;
+  onProjectChange?(project: Project): void;
+  onExit?(): void;
+  saveState?: string;
+  storageError?: string;
+}
+export function App({ initialProject, studio = false, onProjectChange, onExit, saveState = "Saved locally", storageError }: AppProps = {}) {
+  const [initial] = useState(() => initialProject ? {project: initialProject, message: null} : loadInitial());
   const [hist, dispatchHist] = useReducer(historyReducer, initial.project, initialHistory);
   const project = hist.present;
 
@@ -124,8 +137,14 @@ export function App() {
   const [rightWidth, setRightWidth] = useState(280);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [visualStyle, setVisualStyle] = useState<VisualStyle>("shaded");
-  const [shadows, setShadows] = useState(true);
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>(studio ? "hiddenLine" : "shaded");
+  const [shadows, setShadows] = useState(!studio);
+  const [gridVisible, setGridVisible] = useState(!studio);
+  const [placementWallType, setPlacementWallType] = useState(project.wallTypes[0]?.id ?? "");
+  const [placementOpeningType, setPlacementOpeningType] = useState("");
+  const [wallHeight, setWallHeight] = useState(3000);
+  const wallTypeId = project.wallTypes.find(t => t.id === placementWallType)?.id ?? project.wallTypes[0]?.id ?? "";
+  const openingTypeId = project.openingTypes.find(t => t.id === placementOpeningType && t.kind === tool)?.id ?? project.openingTypes.find(t => t.kind === tool)?.id ?? "";
   const [scale, setScale] = useState(100);
   const [detail, setDetail] = useState<DetailLevel>("Medium");
 
@@ -153,8 +172,8 @@ export function App() {
   }
 
   // Handlers for the scene read the latest state through this ref, because the scene is created once.
-  const ctx = useRef({ project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation });
-  ctx.current = { project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation };
+  const ctx = useRef({ project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation, wallTypeId, openingTypeId, wallHeight });
+  ctx.current = { project, tool, activeId, pendingStart, pendingPoints, snapStep, run, elevation, wallTypeId, openingTypeId, wallHeight };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -170,6 +189,7 @@ export function App() {
         if (ctx.current.tool === "select") setSelection(picked);
       },
     });
+    if (studio) scene.setStudioTheme();
     sceneRef.current = scene;
 
     // Test hook, available in development builds only: lets end-to-end tests read the model and locate points on screen.
@@ -192,6 +212,12 @@ export function App() {
   }, []);
 
   useEffect(() => sceneRef.current?.setProject(project), [project]);
+  useEffect(() => sceneRef.current?.setGridVisible(gridVisible), [gridVisible]);
+  useEffect(() => { if (studio) { const id=requestAnimationFrame(()=>sceneRef.current?.fitToModel()); return ()=>cancelAnimationFrame(id); } }, [studio]);
+  const saveCallback = useRef(onProjectChange);
+  saveCallback.current = onProjectChange;
+  const lastNotified = useRef(initial.project);
+  useEffect(() => { if (studio && lastNotified.current !== project) { lastNotified.current = project; saveCallback.current?.(project); } }, [project, studio]);
   useEffect(() => sceneRef.current?.setActiveLevel(activeId), [activeId, project]);
   useEffect(() => sceneRef.current?.setSelection(selection), [selection]);
   useEffect(() => sceneRef.current?.setTool(tool), [tool]);
@@ -202,7 +228,9 @@ export function App() {
   useEffect(() => sceneRef.current?.setAnnotationScale(scale), [scale]);
   useEffect(() => sceneRef.current?.setDetailLevel(detail), [detail]);
   useEffect(() => {
-    if (tool === "wall") {
+    if (tool === "dimension") {
+      sceneRef.current?.setDimensionPreview(pendingPoints,cursor);
+    } else if (tool === "wall") {
       sceneRef.current?.setPreview(pendingStart, cursor);
       sceneRef.current?.setPolygonPreview(null, null);
     } else if (isBoundaryTool(tool)) {
@@ -216,6 +244,7 @@ export function App() {
 
   // Autosave after edits settle, so that a reload recovers the latest model.
   useEffect(() => {
+    if (studio) return;
     const storage = getStorage();
     if (!storage) return;
     const handle = window.setTimeout(() => {
@@ -226,7 +255,7 @@ export function App() {
       }
     }, 400);
     return () => window.clearTimeout(handle);
-  }, [project]);
+  }, [project, studio]);
 
   // Contextual ribbon follows the selection, like a professional BIM workspace.
   useEffect(() => {
@@ -253,6 +282,7 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       const mod = event.ctrlKey || event.metaKey;
+      if (target.closest("dialog, [role=dialog], [role=menu]") || launcherOpen || shortcutsOpen) return;
       if (mod && (event.key === "k" || event.key === "K")) {
         event.preventDefault();
         setLauncherOpen((v) => !v);
@@ -263,7 +293,7 @@ export function App() {
         handleSave();
         return;
       }
-      if (target.closest("input, textarea, select")) return;
+      if (target.closest("input, textarea, select, [contenteditable=true]")) return;
       if (mod && !event.shiftKey && (event.key === "z" || event.key === "Z")) {
         event.preventDefault();
         undo();
@@ -298,6 +328,7 @@ export function App() {
       else if (event.key === "c" || event.key === "C") changeTool("column");
       else if (event.key === "e" || event.key === "E") changeTool("ceiling");
       else if (event.key === "o" || event.key === "O") changeTool("roof");
+      else if (event.key === "m" || event.key === "M") changeTool("dimension");
       else if (event.key === "s" || event.key === "S") changeTool("select");
       else if (event.key === "Delete" || event.key === "Backspace") deleteSelection();
     };
@@ -306,7 +337,9 @@ export function App() {
   });
 
   function changeTool(next: Tool) {
+    if (next === "dimension") { setElevation(null); setView("plan"); }
     setTool(next);
+    if (studio) setSelection(null);
     setPendingStart(null);
     setPendingPoints([]);
     setCursor(null);
@@ -316,6 +349,7 @@ export function App() {
     if (!canUndo(hist)) return say("Nothing to undo.");
     const label = hist.past[hist.past.length - 1].label;
     setPendingStart(null);
+    setPendingPoints([]);
     dispatchHist({ type: "undo" });
     say(`Undid: ${label}.`);
   }
@@ -324,6 +358,7 @@ export function App() {
     if (!canRedo(hist)) return say("Nothing to redo.");
     const label = hist.future[0].label;
     setPendingStart(null);
+    setPendingPoints([]);
     dispatchHist({ type: "redo" });
     say(`Redid: ${label}.`);
   }
@@ -335,6 +370,16 @@ export function App() {
 
   function handlePlanClick(point: Point) {
     const c = ctx.current;
+    if (c.tool === "dimension") {
+      const at=snapToEndpoint(point), pts=c.pendingPoints;
+      if(pts.length===0){setPendingPoints([at]);say("Choose the second measurement point.");return;}
+      if(pts.length===1){if(pointsEqual(at,pts[0])){say("Choose a different point (at least 1 mm apart).","error");return;}setPendingPoints([...pts,at]);say("Click to set the dimension offset. Esc cancels.");return;}
+      let id="";
+      if(c.run("Add dimension",p=>{const r=addDimension(p,c.activeId,pts[0],pts[1],dimensionOffset(pts[0],pts[1],at));id=r.dimension.id;return r.project;})){
+        setPendingPoints([]);setTool("select");setSelection({kind:"dimension",id});say("Static dimension added. It does not follow later wall edits.");
+      }
+      return;
+    }
     if (c.tool === "wall") {
       const start = c.pendingStart;
       const at = snapToEndpoint(point);
@@ -343,7 +388,7 @@ export function App() {
         say("Click the next point. Esc finishes the chain.");
         return;
       }
-      if (c.run("Add wall", (p) => addWall(p, c.activeId, start, at, { wallTypeId: p.wallTypes[0]?.id }).project)) {
+      if (c.run("Add wall", (p) => addWall(p, c.activeId, start, at, { wallTypeId: c.wallTypeId, height: c.wallHeight }).project)) {
         setPendingStart(at);
         setSelection(null);
         say("Wall added. Keep clicking to chain walls, or press Esc to finish.");
@@ -387,7 +432,7 @@ export function App() {
         say(`Click closer to a wall on ${levelById(c.project, c.activeId)?.name ?? "this level"} to place a ${kind}.`, "error");
         return;
       }
-      const type = c.project.openingTypes.find((t) => t.kind === kind);
+      const type = c.project.openingTypes.find((t) => t.id === c.openingTypeId && t.kind === kind) ?? c.project.openingTypes.find((t) => t.kind === kind);
       if (!type) return say(`No ${kind} type is available.`, "error");
       const offset = snapValue(nearest.offset, c.snapStep);
       let created: string | null = null;
@@ -489,7 +534,9 @@ export function App() {
 
   function deleteSelection() {
     if (!selection) return;
-    if (selection.kind === "wall") {
+    if (selection.kind === "dimension") {
+      if(run("Delete dimension",p=>deleteDimension(p,selection.id),"Dimension deleted."))setSelection(null);
+    } else if (selection.kind === "wall") {
       if (run("Delete wall", (p) => deleteWall(p, selection.id), "Wall deleted (its doors and windows too).")) setSelection(null);
     } else if (selection.kind === "opening") {
       if (run("Delete opening", (p) => deleteOpening(p, selection.id), "Door or window deleted.")) setSelection(null);
@@ -522,10 +569,12 @@ export function App() {
   }
 
   function handleOpen(file: File) {
+    if (studio && file.size > 20 * 1024 * 1024) { say("Project files must be smaller than 20 MB.", "error"); return; }
     file
       .text()
       .then((text) => {
         const loaded = parseProject(text);
+        if (studio) loaded.id = newId("proj");
         dispatchHist({ type: "reset", project: loaded });
         setActiveLevelId(loaded.levels[0].id);
         setSelection(null);
@@ -562,7 +611,7 @@ export function App() {
   }
 
   function handleNew() {
-    if (project.walls.length > 0 && !window.confirm("Discard the current project and start a new one?")) return;
+    if (project.walls.length > 0 && !window.confirm(studio ? "Create a new blank project? Your current project stays in the local library." : "Discard the current project and start a new one?")) return;
     const next = createProject("Untitled project");
     dispatchHist({ type: "reset", project: next });
     setActiveLevelId(next.levels[0].id);
@@ -678,13 +727,14 @@ export function App() {
   const kindLabel =
     selection === null
       ? ""
-      : { wall: "Wall", opening: "Opening", floor: "Floor", room: "Room", column: "Column", ceiling: "Ceiling", roof: "Roof" }[selection.kind];
+      : { wall: "Wall", opening: "Opening", floor: "Floor", room: "Room", column: "Column", ceiling: "Ceiling", roof: "Roof", dimension:"Dimension" }[selection.kind];
 
   function stub(id: string, title: string, description: string, tab: RibbonTabId | null, group: CommandSpec["group"]): CommandSpec {
     return { id, title, description, tab, group, implemented: false, run: () => undefined };
   }
 
   const commands: CommandSpec[] = [
+    {id:"annotate.alignedDim",title:"Dimension",description:"Static aligned dimension: choose two points, then an offset.",tab:"annotate",group:"annotate",shortcut:"M",implemented:true,run:()=>changeTool("dimension"),isActive:()=>tool==="dimension"},
     { id: "file.new", title: "New", description: "Start a new project.", tab: null, group: "file", shortcut: "Ctrl+N", implemented: true, run: handleNew },
     { id: "file.open", title: "Open…", description: "Open a project file.", tab: null, group: "file", shortcut: "Ctrl+O", implemented: true, run: () => fileInputRef.current?.click() },
     { id: "file.save", title: "Save", description: "Save the project to a file.", tab: null, group: "file", shortcut: "Ctrl+S", implemented: true, run: handleSave },
@@ -749,7 +799,6 @@ export function App() {
     stub("import.ifc", "Link IFC", "Link or import IFC models (roadmap M9).", "insert", "insert"),
     stub("import.glb", "Import GLB", "Import lightweight GLB references (roadmap M10).", "insert", "insert"),
     stub("load.family", "Load Family", "Load reusable families into the project (roadmap M6).", "insert", "insert"),
-    stub("annotate.alignedDim", "Aligned Dimension", "Aligned dimensions (roadmap M4).", "annotate", "annotate"),
     stub("annotate.angularDim", "Angular Dimension", "Angular dimensions (roadmap M4).", "annotate", "annotate"),
     stub("annotate.detailLine", "Detail Line", "Detail lines (roadmap M4).", "annotate", "annotate"),
     stub("annotate.text", "Text", "Text notes with leaders (roadmap M4).", "annotate", "annotate"),
@@ -833,6 +882,7 @@ export function App() {
   const hint =
     elevation
       ? "Generated elevation — read-only. Switch to Plan or 3D to model."
+      : tool === "dimension" ? "Choose two points, then click to set the offset. Static measurement · Esc cancels."
       : tool === "wall"
       ? pendingStart
         ? "Click the next point to continue the wall. Esc finishes."
@@ -848,6 +898,80 @@ export function App() {
           : tool === "door" || tool === "window"
             ? `Click near a wall on ${activeLevel?.name ?? "the active level"} to host a ${tool}.`
             : "Click an element to select it. Drag to pan (plan) or orbit (3D). Ctrl+K opens the command launcher.";
+
+  if (studio) return (
+    <>
+      <CanvasWorkspace
+        project={project} tool={tool} view={view} activeLevelId={activeId} selection={selection}
+        commands={commandById} properties={<PropertiesPanel
+              project={project}
+              selection={selection}
+              onDimensionPatch={(id,patch)=>run("Edit dimension",p=>updateDimension(p,id,patch))}
+              onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
+              onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
+              onWallTypeMaterial={(typeId, materialId) => run("Edit wall type material", (p) => updateWallType(p, typeId, { materialId }))}
+              onOpeningPatch={(openingId, patch) => run("Edit opening", (p) => updateOpening(p, openingId, patch))}
+              onFloorPatch={(floorId, patch) => run("Edit floor", (p) => updateFloor(p, floorId, patch))}
+              onRoomPatch={(roomId, patch) => run("Edit room", (p) => updateRoom(p, roomId, patch))}
+              onColumnPatch={(columnId, patch) => run("Edit column", (p) => updateColumn(p, columnId, patch))}
+              onCeilingPatch={(ceilingId, patch) => run("Edit ceiling", (p) => updateCeiling(p, ceilingId, patch))}
+              onRoofPatch={(roofId, patch) => run("Edit roof", (p) => updateRoof(p, roofId, patch))}
+              onSelectWall={(wallId) => setSelection({ kind: "wall", id: wallId })}
+              onDeleteSelection={deleteSelection}
+            />} levels={<LevelsPanel
+              project={project}
+              activeLevelId={activeId}
+              onSelect={(id) => {
+                setActiveLevelId(id);
+                setPendingStart(null);
+              }}
+              onAdd={handleAddLevel}
+              onRename={(id, name) => run("Rename level", (p) => renameLevel(p, id, name))}
+              onElevation={(id, mm) => run("Change level elevation", (p) => setLevelElevation(p, id, mm))}
+              onDelete={(id) => {
+                const level = levelById(project, id);
+                if (!window.confirm(`Delete ${level?.name ?? "this level"} and every element on it?`)) return;
+                if (run("Delete level", (p) => deleteLevel(p, id), `Deleted ${level?.name ?? "level"}.`)) {
+                  setOpenViews((tabs) => tabs.filter((t) => t.id !== planTabId(id)));
+                  if (id === activeId) {
+                    setActiveLevelId(project.levels.find((l) => l.id !== id)?.id ?? activeId);
+                  }
+                }
+              }}
+            />}
+        aiPanel={aiOpen ? <div className="studio-theme studio-ai-drawer"><AiArchitectPanel
+            project={project}
+            selection={selection}
+            activeView={{
+              kind: elevation ? "elevation" : view === "3d" ? "3d" : "plan",
+              levelName: activeLevel?.name,
+              direction: elevation ?? undefined,
+            }}
+            onApply={applyAiPlan}
+            onClose={() => setAiOpen(false)}
+          /></div> : null}
+        hint={hint} message={message} saveState={saveState} storageError={storageError}
+        snap={snapStep} grid={gridVisible} visualStyle={visualStyle} shadows={shadows}
+        wallTypeId={wallTypeId} openingTypeId={openingTypeId} wallHeight={wallHeight}
+        onWallType={setPlacementWallType} onOpeningType={setPlacementOpeningType} onWallHeight={setWallHeight}
+        onTool={changeTool} onView={(next) => { switchView(next); setTimeout(() => sceneRef.current?.fitToModel(), 0); }}
+        onLevel={(id) => {setActiveLevelId(id);setSelection(null);setPendingStart(null);setPendingPoints([]);}}
+        onSelect={setSelection} onRename={(name) => run("Rename project", p => ({...p,name}))}
+        onExit={() => onExit?.()} onSnap={setSnapStep} onGrid={setGridVisible}
+        onStyle={setVisualStyle} onShadows={setShadows} onFit={() => sceneRef.current?.fitToModel()}
+        onZoom={factor => sceneRef.current?.zoomBy(factor)} onDismissMessage={() => setMessage(null)}
+        onMaterial={(materialId) => {if(selection?.kind === "wall") {const w=wallById(project,selection.id);if(w)run("Change wall material",p=>updateWallType(p,w.wallTypeId,{materialId}));}}}
+      >
+        <div className="canvas-host" ref={containerRef} />
+        {elevation ? <ElevationView project={project} direction={elevation}/> : null}
+      </CanvasWorkspace>
+      <input ref={fileInputRef} type="file" accept="application/json,.json" hidden onChange={e=>{const file=e.target.files?.[0];if(file)handleOpen(file)}}/>
+      <div className="studio-theme">
+        {launcherOpen && <StudioCommand commands={commands.filter(c=>c.implemented)} onRun={id=>commandById.get(id)?.run()} onClose={()=>setLauncherOpen(false)}/>}
+        {shortcutsOpen && <ShortcutsDialog commands={commands.filter(c=>c.implemented)} extra={[["Esc","Finish or cancel current drawing"]]} onClose={()=>setShortcutsOpen(false)}/>}
+      </div>
+    </>
+  );
 
   return (
     <div className="app">
@@ -1019,6 +1143,7 @@ export function App() {
             <PropertiesPanel
               project={project}
               selection={selection}
+              onDimensionPatch={(id,patch)=>run("Edit dimension",p=>updateDimension(p,id,patch))}
               onWallPatch={(wallId: string, patch) => run("Edit wall", (p) => updateWall(p, wallId, patch))}
               onWallTypeThickness={(typeId, mm) => run("Edit wall type", (p) => updateWallType(p, typeId, { thickness: mm }))}
               onWallTypeMaterial={(typeId, materialId) => run("Edit wall type material", (p) => updateWallType(p, typeId, { materialId }))}
@@ -1106,7 +1231,8 @@ function validSelection(p: Project, selection: Selection): Selection {
     (selection.kind === "room" && p.rooms.some((r) => r.id === selection.id)) ||
     (selection.kind === "column" && p.columns.some((c) => c.id === selection.id)) ||
     (selection.kind === "ceiling" && p.ceilings.some((c) => c.id === selection.id)) ||
-    (selection.kind === "roof" && p.roofs.some((r) => r.id === selection.id));
+    (selection.kind === "roof" && p.roofs.some((r) => r.id === selection.id)) ||
+    (selection.kind === "dimension" && p.dimensions.some(d=>d.id===selection.id));
   return found ? selection : null;
 }
 
@@ -1159,6 +1285,7 @@ function labelFor(tool: Tool): string {
     column: "Column",
     ceiling: "Ceiling",
     roof: "Roof",
+    dimension:"Dimension",
   }[tool];
 }
 

@@ -3,6 +3,7 @@ import { createProject } from "./project";
 import { firstError } from "./validation";
 import {
   SCHEMA_VERSION,
+  type Dimension,
   type Ceiling,
   type CeilingType,
   type Column,
@@ -48,6 +49,7 @@ export function parseProject(text: string): Project {
 
   let project: Project;
   if (raw.schemaVersion === SCHEMA_VERSION) project = readCurrent(raw);
+  else if (raw.schemaVersion === 4) project = readCurrent({...raw,schemaVersion:SCHEMA_VERSION,dimensions:[]});
   else if (raw.schemaVersion === 3) project = migrateV3(raw);
   else if (raw.schemaVersion === 2) project = migrateV2(raw);
   else if (raw.version === 1) project = migrateV2(migrateV1ToV2(raw));
@@ -206,6 +208,11 @@ function readCurrent(raw: Record<string, unknown>): Project {
       rise: int(r, "rise"),
     };
   });
+  const dimensions = array(raw, "dimensions").map((item,i):Dimension=>{
+    const r=record(item,`Dimension ${i}`);const unit=str(r,"unit");
+    if(unit!=="mm"&&unit!=="m")throw new Error(`Dimension ${i} has an unsupported display unit.`);
+    return {id:str(r,"id"),levelId:str(r,"levelId"),start:point(r,"start"),end:point(r,"end"),offset:int(r,"offset"),unit};
+  });
   const units = record(raw.units, "Units");
   if (units.length !== "mm") throw new Error("Project length unit must be millimetres.");
   return {
@@ -229,6 +236,7 @@ function readCurrent(raw: Record<string, unknown>): Project {
     columns,
     ceilings,
     roofs,
+    dimensions,
   };
 }
 
@@ -248,6 +256,7 @@ function migrateV3(raw: Record<string, unknown>): Project {
     roofTypes: raw.roofTypes ?? base.roofTypes.map((t) => ({ ...t, materialId })),
     ceilings: raw.ceilings ?? [],
     roofs: raw.roofs ?? [],
+    dimensions: [],
   };
   return readCurrent(injected);
 }
@@ -353,6 +362,7 @@ function v2ToV3(v2: ProjectV2): Project {
     columns: [],
     ceilings: [],
     roofs: [],
+    dimensions: [],
   };
 }
 

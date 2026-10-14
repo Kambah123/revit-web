@@ -64,7 +64,7 @@ describe("schema", () => {
     };
     const p = parseProject(JSON.stringify(v1));
     // The v1 file is migrated through v2 and v3 to the current schema (v4).
-    expect(p.schemaVersion).toBe(4);
+    expect(p.schemaVersion).toBe(5);
     expect(p.name).toBe("Old");
     expect(p.levels.map((l) => l.elevation)).toEqual([0, 3200]);
     expect(p.walls[0].end).toEqual({ x: 4100, y: 0 });
@@ -77,7 +77,7 @@ describe("schema", () => {
     expect(parseProject(serializeProject(p))).toEqual(p);
   });
 
-  it("migrates schema v2 through v3 to v4 with default materials and types", () => {
+  it("migrates schema v2 through v3 to v5 with default materials and types", () => {
     const v2 = {
       format: "revit-web/project",
       schemaVersion: 2,
@@ -96,7 +96,7 @@ describe("schema", () => {
       openings: [{ id: "op1", hostWallId: "w1", openingTypeId: "ot-a", offset: 2000 }],
     };
     const p = parseProject(JSON.stringify(v2));
-    expect(p.schemaVersion).toBe(4);
+    expect(p.schemaVersion).toBe(5);
     expect(p.revision).toBe(7);
     expect(p.wallTypes[0].thickness).toBe(200);
     expect(p.materials).toHaveLength(1);
@@ -113,7 +113,7 @@ describe("schema", () => {
     expect(parseProject(serializeProject(p))).toEqual(p);
   });
 
-  it("migrates schema v3 to v4 with seeded ceiling and roof types", () => {
+  it("migrates schema v3 to v5 with seeded ceiling and roof types", () => {
     const v3 = {
       format: "revit-web/project",
       schemaVersion: 3,
@@ -149,7 +149,7 @@ describe("schema", () => {
       columns: [],
     };
     const p = parseProject(JSON.stringify(v3));
-    expect(p.schemaVersion).toBe(4);
+    expect(p.schemaVersion).toBe(5);
     expect(p.ceilings).toEqual([]);
     expect(p.roofs).toEqual([]);
     expect(p.ceilingTypes.length).toBeGreaterThan(0);
